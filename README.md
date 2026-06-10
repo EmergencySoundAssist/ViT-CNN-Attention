@@ -33,7 +33,7 @@ flowchart TD
     end
 
     subgraph MB["방식 B — 학습 기반 (속도 합성 라벨)"]
-        B1["검출 · ViT<br/>8×8 패치 → 전역 self-attention"] -->|"siren일 때"| B2["DL 속도 head<br/>synth_passby 합성 라벨로 학습<br/>속도 tier + 방향 멀티태스크"]
+        B1["검출 · ViT<br/>8×8 패치 → 전역 self-attention"] -->|"siren일 때"| B2["DL 속도 head<br/>synth_passby 합성 라벨로 학습<br/>연속 속도 회귀 + 방향 → tier 비닝"]
     end
 
     PRE --> A1

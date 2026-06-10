@@ -90,10 +90,14 @@ attention의 기여를 입증하기 위해 **동일 백본 + GAP 풀링**(plain 
 
 ```
 ViT backbone (검출과 공유, 동결) → CLS feature (128)
-└─ 속도 head: Linear(128→64) → GELU → ┬ tier logits (3): 정지/접근-느림/접근-빠름
+└─ 속도 head: Linear(128→64) → GELU → ┬ 속도 회귀 v̂ (1, 연속 km/h)
                                        └ direction logit (1): 접근/이탈
-손실 = CE(tier) + λ·BCE(direction),  λ=0.5
+손실 = Huber(v̂, v) + λ·BCE(direction),  λ=0.5
 ```
+
+**연속 회귀를 쓰는 이유**: 도플러 변화량은 `Δf/f ≈ v/c`로 **연속·준선형**(v≤80 km/h에서 2차항 ~0.4%)이고, synth_passby는 임의 속도로 합성 가능하므로 라벨을 `v ~ U(0, 80)` **연속 샘플링**으로 만든다. 이산 tier 분류보다 보간 일반화에 유리. tier(정지/접근-느림/접근-빠름)는 v̂·방향의 **비닝으로 파생** — 경계는 캘리브레이션 단계에서 조정.
+
+**정보 한계 주의**: 증강을 아무리 미세하게 해도 물리적 정보량은 못 넘는다 — 통과 전이 관측 시 ~7–9 km/h, 정상상태 단일 윈도우의 절대속도는 ±50 km/h 바닥 ([docs/03](03-doppler-speed.md)). 연속 회귀는 이 한계 *안에서* 해상도를 최대로 쓰는 설계다.
 
 **2-stage 학습**: ① 진짜 데이터로 검출 학습 → ② backbone **동결** 후 head만 synth_passby 합성셋으로 학습. 이유: 합성 도메인의 시프트가 검출 정확도를 오염시키지 않도록 격리. (head만으론 부족하면 마지막 encoder 블록만 미세조정)
 
@@ -101,7 +105,7 @@ ViT backbone (검출과 공유, 동결) → CLS feature (128)
 
 - 균일 배속을 라벨로 쓰면 source 피치와 혼동 → **라벨 모순** → 학습 불가 (실측 ±50 km/h 바닥)
 - `synth_passby`(retarded-time 통과 모델)는 비율 `(c+v)/(c−v)`가 **source-무관** → 라벨 일관 → 학습 가능
-- 파라미터 랜덤화: v ∈ {0, 10~80 km/h}, d_min 5~30 m, SNR 5~20 dB(noise 클래스 합성), **윈도우 오프셋 랜덤**(통과 전·중·후 부분 글라이드 포함 — 실시간 5 s 윈도우가 전체 전이를 못 볼 수 있으므로)
+- 파라미터 랜덤화: **v ~ U(0, 80 km/h) 연속** (v=0 일부 포함 — "정지" 학습), d_min 5~30 m, SNR 5~20 dB(noise 클래스 합성), **윈도우 오프셋 랜덤**(통과 전·중·후 부분 글라이드 포함 — 실시간 5 s 윈도우가 전체 전이를 못 볼 수 있으므로)
 
 ### 3.3 관련 선행 연구 (속도 추정 자체)
 
@@ -180,7 +184,7 @@ ViT backbone (검출과 공유, 동결) → CLS feature (128)
 - **주 지표: macro-F1** (클래스 불균형 — accuracy는 보조)
 - **안전 지표: siren recall** — 운용점은 "siren recall ≥ 95%"로 threshold 고정 후, 그때의 **오경보율(FA/hour)** 을 noise 연속 스트림에서 측정 (놓친 사이렌 = 안전사고, 잦은 오경보 = 알림 무시 유발 — 양쪽 다 명시적 관리)
 - 혼동행렬 (특히 **헬리콥터→siren** 오인 점검)
-- 속도(B): tier 정확도·혼동행렬, 방향 정확도, A–B 일치율 ([docs/04](04-architecture-and-comparison.md) §평가 프로토콜)
+- 속도(B): km/h MAE(회귀 출력) + 파생 tier 정확도·혼동행렬, 방향 정확도, A–B 일치율 ([docs/04](04-architecture-and-comparison.md) §평가 프로토콜)
 - 효율: 파라미터 수, Orin 지연 (TensorRT FP16, batch=1, 1000회 중앙값)
 - **3 seed 평균±표준편차** 보고 (단일 run 비교 금지)
 
@@ -204,7 +208,7 @@ seed       {42, 43, 44}
 | P0 | 데이터 파이프라인: 파일단위 split → 청크 인덱스 → 멜 캐시 | `dataset.py` | split 누수 0 검증 (원본파일 교집합 = ∅) |
 | P1 | 검출 사다리: B1→B2→B3 학습 + 증강 ablation | `train.py`, 결과표 | 3-seed macro-F1, siren recall@운용점 |
 | P2a | 방식 A 마무리: Viterbi phase-align + tier 래퍼 | `doppler_speed.py` 확장 | 합성 pass-by tier 정확도 |
-| P2b | 방식 B 속도: synth_passby 셋 생성 + head 학습 | `speed_head.py` | 동일 셋 tier 정확도, A–B 일치율 |
+| P2b | 방식 B 속도: synth_passby 셋 생성 + head 학습 | `speed_head.py` | 동일 셋 km/h MAE·tier 정확도, A–B 일치율 |
 | P3 | Orin 배포: ONNX → TensorRT FP16, 지연 측정 | `.engine`, 벤치 표 | end-to-end < 100 ms |
 | P4 | 실시간 통합: 슬라이딩 추론 + 중앙값 + 알림 | `realtime.py` | 데모 시나리오 통과 |
 
