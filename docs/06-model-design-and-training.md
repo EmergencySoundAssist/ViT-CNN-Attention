@@ -21,7 +21,11 @@
 
 ---
 
-## 1. 방식 A 검출 모델 — CNN + Temporal Attention (~0.6M)
+## 1. 방식 A 검출 모델 — CNN + Temporal Attention (0.110M 실측)
+
+> 핸드오프의 "~0.6M" 추정은 오류였음 — `models.py` 실측 0.110M. **ViT(0.838M)와 7.6× 비대칭**이며,
+> 이 비대칭 자체가 비교 축의 일부다 ("작은 conv 편향 vs 큰 전역 attention"). 파라미터를 통제한
+> 비교는 ablation 6(채널 확장 CNN)으로 별도 수행.
 
 ### 1.1 구조 (layer-by-layer)
 
@@ -49,11 +53,11 @@
 
 ### 1.3 내부 ablation 베이스라인
 
-attention의 기여를 입증하기 위해 **동일 백본 + GAP 풀링**(plain CNN, ~0.55M)을 함께 학습 — "attention이 실제로 뭘 더했나"의 직접 비교쌍.
+attention의 기여를 입증하기 위해 **동일 백본 + GAP 풀링**(plain CNN, 0.101M 실측)을 함께 학습 — "attention이 실제로 뭘 더했나"의 직접 비교쌍.
 
 ---
 
-## 2. 방식 B 검출 모델 — ViT (~0.8M)
+## 2. 방식 B 검출 모델 — ViT (0.838M 실측)
 
 ### 2.1 구조
 
@@ -178,7 +182,7 @@ ViT backbone (검출과 공유, 동결) → CLS feature (128)
 | 레벨 | 모델 | 역할 |
 |------|------|------|
 | B0 | 다수결 (전부 noise) | 바닥 — 불균형 데이터에서 정확도 착시 점검 |
-| B1 | Plain CNN (GAP 풀링, ~0.55M) | Salamon & Bello 2017 스타일 표준 베이스라인 |
+| B1 | Plain CNN (GAP 풀링, 0.101M) | Salamon & Bello 2017 스타일 표준 베이스라인 |
 | B2 | **CNN + Temporal Attention** | B1과의 차이 = attention의 기여 |
 | B3 | **ViT** | B2와의 차이 = 전역 attention vs conv 편향 |
 | (B4) | AST-small 전이 (선택) | 사전학습 상한선 참조 — "from-scratch가 어디까지 따라가나" |
@@ -209,7 +213,8 @@ optimizer  AdamW (lr 1e-3, wd 1e-4)
 schedule   cosine, warmup 5ep (ViT) / 0ep (CNN)
 batch      64
 epochs     50, early stop (val macro-F1, patience 10)
-loss       CE + inverse-frequency class weight
+loss       CE 무가중 + label smoothing 0.1(ViT만) — 배치 균형은 1:1:2 샘플러 담당
+           (class weight 병용 = 이중 보정이라 금지; 샘플러 없는 구성에서만 weight)
 seed       {42, 43, 44}
 ```
 
@@ -233,6 +238,7 @@ seed       {42, 43, 44}
 3. 윈도우 3 s vs 5 s (소방 wail 실측 근거의 실증)
 4. 속도: 균일배속 라벨 vs synth_passby 라벨 (라벨 모순 실증 — ±56 km/h 바닥 재현)
 5. (선택) AST 전이 vs from-scratch
+6. (선택) 파라미터 매칭: 채널 확장 CNN(~0.8M) vs ViT — 7.6× 비대칭이 결과를 좌우하는지 점검
 
 ---
 

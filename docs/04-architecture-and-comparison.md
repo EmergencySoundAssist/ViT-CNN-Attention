@@ -61,12 +61,12 @@ flowchart TD
 
 ### 축 1 · 검출 모델: CNN+Attention vs ViT
 
-**CNN + Temporal Attention (~0.6M params)**
+**CNN + Temporal Attention (0.110M params 실측)**
 - 구조: Conv2d 블록 ×3 (32→64→128, 각 MaxPool) → 주파수축 풀링 → Temporal Attention(Linear 128→64 → Tanh → Linear 64→1 → Softmax) → 가중합 context vector → 분류기.
 - 강점: convolution의 귀납적 편향(국소성·이동불변성) 덕에 **소량 데이터(siren 2,239)에서 안정적**. attention 가중치를 시각화하면 "윈도우의 어느 구간을 보고 판단했는지" 보여줄 수 있어 부분적 해석가능성도 있음.
 - 약점: 수용영역이 국소적이라 4.7 s 장주기 wail 같은 **전역 반복 구조**는 층을 쌓아야 간접적으로 포착.
 
-**ViT (~0.8M params)**
+**ViT (0.838M params 실측)**
 - 구조: 멜 스펙트로그램 → 8×8 패치 임베딩 → CLS 토큰 + positional embedding → Pre-LN Transformer encoder 4층(4헤드) → CLS로 분류.
 - 강점: self-attention이 **전역 시간 구조(사이클 반복)를 1층부터 직접** 봄 → 윈도우 전체에 걸친 소방차 wail 패턴 등에 유리할 가능성.
 - 약점: 귀납적 편향이 없어 데이터 요구량이 큼. 2~3만 샘플 규모에선 SpecAugment/Mixup/CutMix가 사실상 필수.
