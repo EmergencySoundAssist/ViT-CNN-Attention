@@ -59,9 +59,7 @@ def main():
             ln = ann.get("labelName")
             wp = wav_idx.get(unicodedata.normalize("NFC", ln)) if ln else None
             if wp:
-                police.append({"wav": wp,
-                               "start": float(ann.get("area", {}).get("start", 0) or 0),
-                               "end": float(ann.get("area", {}).get("end", 0) or 0)})
+                police.append({"wav": wp})
     random.shuffle(police)
 
     # ---------- (A) 물리 검증 + 속도 복원 ----------
@@ -75,7 +73,7 @@ def main():
         if n_used >= 30:
             break
         try:
-            sr, seg = load_region(r["wav"], r["start"], r["end"])
+            sr, seg = load_region(r["wav"])   # 클립 전체 (area 좌표 전달 금지)
         except Exception:
             continue
         if len(seg) < sr * 2:
@@ -96,14 +94,13 @@ def main():
             phys_err_f.append(abs(f_v - f0 * k) / (f0 * k) * 100)
             # 속도 복원: v = c(1 - T_obs/T_ref)
             rec_self[v].append(C * (1 - T_v / T0) * 3.6)            # 자기참조
-            n_used  # noop
 
     pop_T = float(np.median(base_T))   # 모집단 정지 사이클 기준
     pop_f = float(np.median(base_f))
     # 모집단/피치 기준 복원은 base 수집 후 다시 계산
     for r in police[:80]:
         try:
-            sr, seg = load_region(r["wav"], r["start"], r["end"])
+            sr, seg = load_region(r["wav"])
         except Exception:
             continue
         if len(seg) < sr * 2:

@@ -49,7 +49,7 @@
 }
 ```
 
-### ⚠️ 두 가지 함정 (반드시 처리)
+### ⚠️ 세 가지 함정 (반드시 처리)
 
 1. **WAV 파일명은 `audio.fileName`이 아니라 `annotations[0].labelName`** (뒤에 `_1`이 붙음).
    `audio.fileName`으로 매칭하면 **0건**이 됩니다.
@@ -57,6 +57,10 @@
 2. **macOS 파일시스템(NFD) ↔ JSON 문자열(NFC) 한글 불일치.**
    파일시스템의 `자동차`(NFD)와 JSON의 `자동차`(NFC)는 바이트가 달라 dict 매칭이 실패합니다.
    → 모든 비교 전 `unicodedata.normalize("NFC", ...)` 필수.
+
+3. **`area.start/end`는 원본 녹음 좌표 — labelName wav 내부 오프셋이 아님.**
+   원천 wav는 **이미 area 구간만 잘라낸 클립**입니다 (원본:클립 = 1:1, end−start ≈ wav 길이 — 전수 확인).
+   start/end로 wav를 다시 자르면 앞 ~2초(전형 start=2)를 버리게 됩니다. 클립 분석·청크 그리드는 wav 전체에.
 
 ## 메타데이터 분포 (전수 확인)
 
@@ -78,7 +82,8 @@
 ```python
 from siren_data import index_clips
 clips = index_clips(classes=("siren",))   # 또는 ("siren","horn","noise")
-# 각 Clip: wav 경로, label, sub(차종), start/end, split(train/val)
+# 각 Clip: wav 경로, label, sub(차종), start/end(⚠ 원본 좌표 — 함정 #3), split(AI Hub 폴더 기준)
 ```
 
 NFC 정규화와 `labelName` 매칭을 내부에서 처리. `classes=` 인자 한 줄로 3-클래스 확장.
+**학습용 train/val/test 분할의 정본은 `dataset.py`** (원본 단위 split + 청크 + 멜 캐시) — siren_data의 split은 AI Hub 폴더 구분일 뿐.

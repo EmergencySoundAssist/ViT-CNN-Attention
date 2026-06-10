@@ -23,12 +23,13 @@ LEAF_CLASS = [
 
 @dataclass
 class Clip:
-    wav: str          # WAV 절대경로
+    wav: str          # WAV 절대경로 — 파일 자체가 이미 area 구간만 잘린 클립
     label: str        # siren / horn / noise
     sub: str          # 구급차 / 경찰차 / 소방차 등 (없으면 "")
-    start: float      # 사이렌 구간 시작(초)
-    end: float        # 사이렌 구간 끝(초)
-    split: str        # train / val
+    start: float      # annotation.area 시작(초) ⚠ 원본 녹음 좌표 — wav 내부 오프셋 아님!
+    end: float        # annotation.area 끝(초)    (end-start ≈ wav 길이. docs/01 함정 #3)
+    split: str        # AI Hub 폴더 기준: train=1.Training / val=2.Validation
+                      # 학습용 train/val/test 분할의 정본은 dataset.py (여기 split 아님)
 
     @property
     def duration(self) -> float:

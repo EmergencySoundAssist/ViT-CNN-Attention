@@ -231,7 +231,9 @@ def mel_for_file(wav: str, write_cache: bool = True) -> np.ndarray:
     m = logmel(load_wav(wav))
     if write_cache:
         p.parent.mkdir(parents=True, exist_ok=True)
-        np.save(p, m)
+        tmp = p.parent / f"{p.stem}.{os.getpid()}.tmp.npy"   # 워커 동시쓰기 대비 원자적 교체
+        np.save(tmp, m)
+        os.replace(tmp, p)
     return m
 
 

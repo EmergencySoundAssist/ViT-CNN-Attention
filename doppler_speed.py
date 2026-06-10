@@ -26,6 +26,11 @@ BAND = (300.0, 2500.0)
 
 # ----------------------------- 입출력 -----------------------------
 def load_wav(path, start=0.0, end=0.0, max_sec=12.0):
+    """wav 로드. start/end는 **이 wav 내부** 초 단위 (AI Hub area 좌표 아님).
+
+    AI Hub 클립 wav는 이미 annotation.area 구간만 잘린 파일이므로 (docs/01 함정 #3),
+    전체 클립 분석은 기본값(start=0, end=0 → 처음부터 max_sec)을 쓴다.
+    """
     sr, x = wavfile.read(path)
     if x.ndim > 1:
         x = x.mean(axis=1)
@@ -282,7 +287,7 @@ def _validate():
         if len(pool) >= 25:
             break
         try:
-            sr, seg = load_wav(c.wav, c.start, c.end)
+            sr, seg = load_wav(c.wav)   # 클립 전체 (area 좌표 전달 금지)
         except Exception:
             continue
         if len(seg) < sr * 7:

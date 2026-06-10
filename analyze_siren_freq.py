@@ -36,18 +36,20 @@ def build_wav_index():
     return idx
 
 
-def load_region(path, start, end):
+def load_region(path, max_sec=REGION_SEC):
+    """클립 wav 앞에서 max_sec 만큼 로드.
+
+    ⚠ AI Hub 클립 wav는 annotation.area 구간만 이미 잘린 파일 — area.start/end(원본
+    녹음 좌표)를 wav 내부 오프셋으로 쓰면 앞부분을 버린다 (docs/01 함정 #3).
+    """
     sr, x = wavfile.read(path)
+    if x.dtype == np.int16:
+        x = x.astype(np.float64) / 32768.0
+    else:
+        x = x.astype(np.float64)
     if x.ndim > 1:
         x = x.mean(axis=1)
-    x = x.astype(np.float64)
-    if np.issubdtype(np.int16, np.integer):
-        x /= 32768.0
-    a = int(max(0, start) * sr)
-    b = int(min(end, start + REGION_SEC) * sr) if end > start else int((start + REGION_SEC) * sr)
-    b = min(b, len(x))
-    seg = x[a:b]
-    return sr, seg
+    return sr, x[: int(max_sec * sr)]
 
 
 def dominant_track(sr, seg):
@@ -111,8 +113,6 @@ def main():
                 "sub": ann.get("subCategory", "?"),
                 "acq": env.get("acqMethod", "?"),
                 "dist": env.get("distance", "?"),
-                "start": float(ann.get("area", {}).get("start", 0) or 0),
-                "end": float(ann.get("area", {}).get("end", 0) or 0),
             })
 
     by_sub = {}
@@ -127,7 +127,7 @@ def main():
     out_rows = []
     for i, r in enumerate(sampled):
         try:
-            sr, seg = load_region(r["wav"], r["start"], r["end"])
+            sr, seg = load_region(r["wav"])
             if len(seg) < sr * 0.5:
                 continue
             peaks, f, mag = dominant_track(sr, seg)

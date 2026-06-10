@@ -36,14 +36,13 @@ def build_wav_index():
     return idx
 
 
-def load_region(path, start, end):
+def load_region(path, max_sec=REGION_SEC):
+    """클립 wav 앞에서 max_sec 만큼 로드 (wav 자체가 area로 잘린 클립 — docs/01 함정 #3)."""
     sr, x = wavfile.read(path)
     if x.ndim > 1:
         x = x.mean(axis=1)
     x = x.astype(np.float64) / 32768.0
-    a = int(max(0, start) * sr)
-    b = int(min(end, start + REGION_SEC) * sr) if end > start else int((start + REGION_SEC) * sr)
-    return sr, x[a:min(b, len(x))]
+    return sr, x[: int(max_sec * sr)]
 
 
 def freq_track(sr, seg):
@@ -114,9 +113,7 @@ def main():
             wp = wav_idx.get(unicodedata.normalize("NFC", ln)) if ln else None
             if not wp:
                 continue
-            recs.append({"wav": wp, "sub": ann.get("subCategory", "?"),
-                         "start": float(ann.get("area", {}).get("start", 0) or 0),
-                         "end": float(ann.get("area", {}).get("end", 0) or 0)})
+            recs.append({"wav": wp, "sub": ann.get("subCategory", "?")})
 
     by_sub = {}
     for r in recs:
@@ -129,7 +126,7 @@ def main():
     rows = []
     for i, r in enumerate(sampled):
         try:
-            sr, seg = load_region(r["wav"], r["start"], r["end"])
+            sr, seg = load_region(r["wav"])
             if len(seg) < sr * 1.0:
                 continue
             track, env, fr = freq_track(sr, seg)
