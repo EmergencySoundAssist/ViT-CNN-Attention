@@ -31,7 +31,7 @@
 - [ ] 검출 + 도플러 융합 (우선순위 siren > horn)
 - [ ] 시각(LED/디스플레이) + 촉각(진동) 알림
 - [ ] 절대 km/h **캘리브레이션 매핑** (실측 기반 경계 보정)
-- [ ] (이후) **TDOA 방향각**: 마이크 어레이 선정 + 방향→속도 기하 보정 **직렬** 연결 ([docs/04](04-architecture-and-comparison.md))
+- [ ] (이후) **TDOA 방향각**: **4-mic 동기화 어레이(확정)** 모델·마운트 선정 + 방향→속도 기하 보정 **직렬** 연결 ([docs/04](04-architecture-and-comparison.md))
 
 ## 설계 결정 로그 (왜 이렇게 했나)
 
@@ -44,4 +44,6 @@
 | 검출 윈도우 5초 | 소방차 wail 1주기(~4.7s) 포함 |
 | 차종 ID 비핵심 | 피치×사이클로 53%, Airacle 3-클래스에 불필요 |
 | 방향각(TDOA)은 속도에 **직렬** (이후) | 도플러는 시선속도(v·cosθ) → 통과 기하가 속도 추정의 사전정보 ([docs/03](03-doppler-speed.md) §기하 한계) |
+| 마이크는 **4-mic 동기화 어레이** (48 kHz) | 2-mic은 전후 모호, 독립 마이크 ×2는 클럭 드리프트로 TDOA 불가 |
+| 추론 tick: 검출 4 Hz · bearing 10 Hz · 속도 1 Hz | 연산이 tick의 ~10%뿐 → 여유를 **경보 지연 단축**에 투입. 1차 경보 목표 = 가청 후 ~1.5 s ([docs/04](04-architecture-and-comparison.md) §지연 예산) |
 | Jetson Orin (RPi5 아님) | GPU+TensorRT → ViT 실용화, 모델 선택 자유 |

@@ -2,7 +2,7 @@
 
 > 마이크로 주변 소리를 실시간 분석해 **사이렌/경적을 감지**하고, **접근·이탈 방향과 속도 단계**를 산출해 시각·촉각으로 알리는 온디바이스 AI 시스템.
 
-- **타겟 하드웨어**: NVIDIA **Jetson Orin Nano / NX** (GPU · TensorRT)
+- **타겟 하드웨어**: NVIDIA **Jetson Orin Nano / NX** (GPU · TensorRT) + **4-mic 동기화 어레이** (48 kHz, TDOA 방향각용)
 - **대상 사용자**: 청각장애 운전자
 
 ---
@@ -26,7 +26,7 @@
 
 ```mermaid
 flowchart TD
-    MIC["마이크 입력<br/>Jetson Orin Nano / NX"] --> PRE["전처리<br/>멜 스펙트로그램 · 로그-스펙트럼"]
+    MIC["4-mic 어레이 입력 (48 kHz 동기)<br/>Jetson Orin Nano / NX"] --> PRE["전처리<br/>멜 스펙트로그램 · 로그-스펙트럼<br/>(검출·도플러는 22.05 kHz 다운샘플)"]
 
     subgraph MA["방식 A — 물리 기반 (속도 무학습)"]
         A1["검출 · CNN + Temporal Attention<br/>국소 conv → 시간축 attention 가중"] -->|"siren일 때"| A2["도플러 물리 DSP<br/>① Viterbi f0 추적 → ② 접근/이탈 분리<br/>③ 피치×사이클 비율 → ④ v = c(r−1)/(r+1)"]
@@ -55,7 +55,7 @@ flowchart TD
 | 속도 실패 양상 | 모르면 **기권** (게이트) — 안전 | 항상 답하지만 분포 밖 보증 없음 |
 | 파라미터 | ~0.6M | ~0.8M |
 
-Orin(GPU·TensorRT)에서는 둘 다 실시간 여유 → 비교의 초점은 지연이 아니라 **정확도·견고성**입니다. 축별 상세 비교·실패 모드·평가 프로토콜: [docs/04](docs/04-architecture-and-comparison.md)
+Orin(GPU·TensorRT)에서는 둘 다 실시간 여유 → 비교의 초점은 지연이 아니라 **정확도·견고성**입니다. 실시간 운용 설계(검출 4 Hz tick, 가청 후 ~1.5 s 1차 경보 목표, 거리 예산)와 축별 상세 비교·실패 모드·평가 프로토콜: [docs/04](docs/04-architecture-and-comparison.md)
 
 ---
 
@@ -130,5 +130,6 @@ python doppler_speed.py
 - [ ] 속도 단계(tier) 래퍼 + 실시간 스트리밍
 - [ ] 검출 모델 (CNN+Attn vs ViT) 학습 + TensorRT
 - [ ] 방식 B (synth_passby 학습 DL 속도) + 교차검증
+- [ ] (이후) TDOA 방향각 — 4-mic 어레이, 방향→속도 직렬 연결
 
 → 전체 로드맵: [docs/05-roadmap.md](docs/05-roadmap.md)
