@@ -22,19 +22,40 @@
 
 ## 시스템 구조
 
+공통 프런트엔드(마이크 → 전처리) 뒤에 **두 방식이 병렬**로 붙고, 교차검증을 거쳐 알림으로 융합됩니다. 두 방식 모두 출력은 같습니다 — `클래스 + 방향 + 속도 단계`.
+
 ```mermaid
 flowchart TD
-    MIC["마이크 입력<br/>Jetson Orin Nano/NX"] --> PRE["전처리<br/>멜 + 로그-스펙트럼"]
-    PRE --> DET{"검출: ViT 또는 CNN+Attn<br/>siren / horn / noise"}
-    DET -->|"클래스"| FUSE["융합 → 알림<br/>시각·촉각, siren 우선"]
-    DET -->|"siren일 때"| V1["① Viterbi f0 추적<br/>사이클 위상 파악"]
-    V1 --> V2["② 접근/이탈 분리<br/>pass-by 검출"]
-    V2 --> V3["③ 도플러 비율<br/>피치 × 사이클"]
-    V3 --> V4["④ 방향·속도·긴급도"]
-    V4 --> FUSE
+    MIC["마이크 입력<br/>Jetson Orin Nano / NX"] --> PRE["전처리<br/>멜 스펙트로그램 · 로그-스펙트럼"]
+
+    subgraph MA["방식 A — 물리 기반 (속도 무학습)"]
+        A1["검출 · CNN + Temporal Attention<br/>국소 conv → 시간축 attention 가중"] -->|"siren일 때"| A2["도플러 물리 DSP<br/>① Viterbi f0 추적 → ② 접근/이탈 분리<br/>③ 피치×사이클 비율 → ④ v = c(r−1)/(r+1)"]
+    end
+
+    subgraph MB["방식 B — 학습 기반 (속도 합성 라벨)"]
+        B1["검출 · ViT<br/>8×8 패치 → 전역 self-attention"] -->|"siren일 때"| B2["DL 속도 head<br/>synth_passby 합성 라벨로 학습<br/>속도 tier + 방향 멀티태스크"]
+    end
+
+    PRE --> A1
+    PRE --> B1
+    A2 --> XV["교차검증<br/>일치 → 신뢰↑ · 불일치 → A 우선<br/>A 기권 시 → B 단독"]
+    B2 --> XV
+    A1 -.->|"클래스"| FUSE
+    B1 -.->|"클래스"| FUSE
+    XV --> FUSE["융합 → 알림<br/>시각·촉각 · siren 우선<br/>방향 + 속도 단계 (빠름/느림)"]
 ```
 
-도플러 분기(①~④)는 **무학습 물리 DSP**로 구현돼 있으며, 동일 기능을 `synth_passby`로 학습한 **DL로 대체/교차검증**할 수 있습니다. → [방식 A vs B 비교](docs/04-architecture-and-comparison.md)
+### 두 방식의 차이 (요약)
+
+| | 방식 A — CNN + Temporal Attention | 방식 B — ViT |
+|---|---|---|
+| 시간 구조 포착 | conv가 국소 패턴, attention이 시간축 가중 | self-attention이 **전역 반복(사이클)을 1층부터 직접** |
+| 데이터 요구량 | 적음 (귀납적 편향) — siren 2,239에 안정 | 큼 — SpecAugment/Mixup/CutMix 필수 |
+| 속도 추정 짝 | **물리 DSP** — 무학습 · 해석가능 · sim-real 갭 0 | **DL head** — synth_passby 라벨 · 잡음강인 기대 |
+| 속도 실패 양상 | 모르면 **기권** (게이트) — 안전 | 항상 답하지만 분포 밖 보증 없음 |
+| 파라미터 | ~0.6M | ~0.8M |
+
+Orin(GPU·TensorRT)에서는 둘 다 실시간 여유 → 비교의 초점은 지연이 아니라 **정확도·견고성**입니다. 축별 상세 비교·실패 모드·평가 프로토콜: [docs/04](docs/04-architecture-and-comparison.md)
 
 ---
 
