@@ -91,7 +91,8 @@ Orin(GPU·TensorRT)에서는 둘 다 실시간 여유 → 비교의 초점은 �
     ├── 02-acoustic-analysis.md
     ├── 03-doppler-speed.md
     ├── 04-architecture-and-comparison.md
-    └── 05-roadmap.md
+    ├── 05-roadmap.md
+    └── 06-model-design-and-training.md   # 모델 상세 설계 · 증강 논문 근거 · 베이스라인
 ```
 
 > **데이터셋은 저장소에 포함하지 않습니다** (AI Hub 라이선스 + 용량). [docs/01-dataset.md](docs/01-dataset.md)에서 받는 법과 배치 경로를 설명합니다.
