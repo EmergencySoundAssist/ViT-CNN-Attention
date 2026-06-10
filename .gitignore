@@ -10,6 +10,9 @@ siren_freq_stats.csv
 siren_cycle_stats.csv
 *.csv
 
+# ===== 파이프라인 캐시 (dataset.py가 재생성) =====
+cache/
+
 # ===== 모델 산출물 =====
 models/
 *.onnx

@@ -7,6 +7,7 @@
 - [x] **도플러 속도 모듈** (`doppler_speed.py`) — 로그-스펙트럼 상호상관 + 물리캡 + 게이트
 - [x] **합성 pass-by 검증** — 중앙값 7–9 km/h, 10 dB 잡음까지 견고
 - [x] **Viterbi 문맥 추적** — 배음 널뛰기 19.2% → 3.6%
+- [x] **P0 데이터 파이프라인** (`dataset.py`) — 원본 녹음 단위 split(누수 0 검증) → 청크 206k → 멜 캐시 · 1:1:2 WeightedRandomSampler. AI Hub `2.Validation`=test 고정, `1.Training`=클래스·차종 stratify 90/10
 
 ## 진행 예정
 
@@ -21,7 +22,7 @@
 - [ ] **교차검증 하네스**: 동일 held-out 합성셋에서 A vs B 일치도 + 각자 정확도
 
 ### (C) 검출 모델
-- [ ] 3-클래스 데이터셋 구성 (horn/noise **균형 샘플링**, 1:1:2 정도)
+- [x] 3-클래스 데이터셋 구성 → `dataset.py` (원본 단위 split + 1:1:2 샘플러)
 - [ ] **CNN+Attention** vs **ViT** 학습 → 정확도 + 지연 비교
 - [ ] 5초 윈도우 + 슬라이딩/파형/통합 증강
 - [ ] **ONNX → TensorRT** 내보내기, Orin 추론 지연 측정
