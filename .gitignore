@@ -1,0 +1,30 @@
+# ===== 데이터셋 (AI Hub 라이선스 + 용량 — 절대 커밋 금지) =====
+130.도시 소리 데이터/
+2.차량사이렌/
+2.차량사이렌 */
+*.zip
+*.wav
+
+# ===== 분석 산출물 (재생성 가능) =====
+siren_freq_stats.csv
+siren_cycle_stats.csv
+*.csv
+
+# ===== 모델 산출물 =====
+models/
+*.onnx
+*.pt
+*.pth
+*.engine
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ===== OS / IDE =====
+.DS_Store
+.idea/
+.vscode/
