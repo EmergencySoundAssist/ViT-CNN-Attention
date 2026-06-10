@@ -12,8 +12,12 @@ from scipy.io import wavfile
 from scipy.signal import stft
 
 ROOT = "/Users/swlee/PycharmProjects/Airacle"
-JSON_DIRS = ["2.차량사이렌", "2.차량사이렌 2"]          # val, train 라벨
-WAV_DIRS  = ["2.차량사이렌 3", "2.차량사이렌 4"]         # val, train wav
+# AI Hub 트리 안 사이렌 디렉토리 (루트의 중복 추출본은 정리·삭제됨)
+_T = "130.도시 소리 데이터/01.데이터"
+JSON_DIRS = [f"{_T}/2.Validation/라벨링데이터/VL_1.교통소음/1.자동차/2.차량사이렌",
+             f"{_T}/1.Training/라벨링데이터/TL_1.교통소음/1.자동차/2.차량사이렌"]   # val, train 라벨
+WAV_DIRS  = [f"{_T}/2.Validation/원천데이터/VS_1.교통소음/1.자동차/2.차량사이렌",
+             f"{_T}/1.Training/원천데이터/TS_1.교통소음/1.자동차/2.차량사이렌"]    # val, train wav
 N_PER_CLASS = 220        # 차종별 최대 표본 수
 REGION_SEC  = 8.0        # 클립당 분석 구간 길이(초)
 NFFT = 8192
