@@ -250,7 +250,11 @@ def chunk_mel(c: Chunk) -> np.ndarray:
 
 # ── 5) torch Dataset (torch는 여기서만 lazy import) ──────────────────────
 class ChunkDataset:
-    """torch.utils.data.Dataset 호환. transform은 (64,216) np.ndarray → 동일 shape."""
+    """torch.utils.data.Dataset 호환.
+
+    transform: Chunk → (64, 216) raw 로그멜 — 정규화 **전** 증강 (augment.MelAugment).
+    None이면 chunk_mel 그대로. 정규화는 항상 여기서 마지막에 수행.
+    """
 
     def __init__(self, chunks: list[Chunk], transform=None):
         self.chunks, self.transform = chunks, transform
@@ -261,10 +265,8 @@ class ChunkDataset:
     def __getitem__(self, i: int):
         import torch
         c = self.chunks[i]
-        x = chunk_mel(c)
-        x = (x - x.mean()) / (x.std() + 1e-5)      # 클립별 정규화 (docs/06 §0)
-        if self.transform is not None:
-            x = self.transform(x)
+        x = self.transform(c) if self.transform is not None else chunk_mel(c)
+        x = (x - x.mean()) / (x.std() + 1e-5)      # 윈도우별 정규화 (docs/06 §0)
         return torch.from_numpy(np.ascontiguousarray(x))[None], LABEL_IDX[c.label]
 
 

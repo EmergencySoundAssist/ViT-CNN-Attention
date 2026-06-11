@@ -93,6 +93,18 @@ def at_tau(probs: np.ndarray, ys: np.ndarray, tau: float):
 
 
 # ── 학습 ────────────────────────────────────────────────────────────────
+class _WorkerInit:
+    """DataLoader 워커별 numpy/random 시드 분기 — macOS spawn에서 pickle 가능해야 해서 모듈 레벨."""
+
+    def __init__(self, seed: int):
+        self.seed = seed
+
+    def __call__(self, wid: int):
+        s = (self.seed * 1009 + wid * 9176) % (2 ** 31)
+        np.random.seed(s)
+        random.seed(s)
+
+
 def lr_lambda_factory(epochs: int, warmup: int):
     def f(ep):  # 0-indexed epoch
         if ep < warmup:
@@ -110,6 +122,8 @@ def main(argv=None):
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--patience", type=int, default=10)
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--aug", default="none", choices=["none", "wave", "wave_spec", "full"],
+                    help="증강 프리셋 (docs/06 §4; full은 배치단 Mixup/CutMix 포함)")
     ap.add_argument("--limit", type=int, default=0, help="스모크: split당 청크 수 제한")
     args = ap.parse_args(argv)
 
@@ -124,10 +138,16 @@ def main(argv=None):
             rng.shuffle(chunks[sp])
             chunks[sp] = chunks[sp][: args.limit]
 
-    train_ds = D.ChunkDataset(chunks["train"])
+    transform = None
+    if args.aug != "none":
+        from augment import MelAugment
+        transform = MelAugment(args.aug, src, "train", seed=args.seed)
+    train_ds = D.ChunkDataset(chunks["train"], transform=transform)
     sampler = D.make_weighted_sampler(chunks["train"])          # 1:1:2 (docs/05)
+
     dl_kw = dict(num_workers=args.workers, persistent_workers=args.workers > 0)
-    train_dl = DataLoader(train_ds, batch_size=args.batch, sampler=sampler, **dl_kw)
+    train_dl = DataLoader(train_ds, batch_size=args.batch, sampler=sampler,
+                          worker_init_fn=_WorkerInit(args.seed), **dl_kw)
     val_dl = DataLoader(D.ChunkDataset(chunks["val"]), batch_size=256, **dl_kw)
     test_dl = DataLoader(D.ChunkDataset(chunks["test"]), batch_size=256, **dl_kw)
 
@@ -143,17 +163,34 @@ def main(argv=None):
           f"train/val/test {len(chunks['train']):,}/{len(chunks['val']):,}/{len(chunks['test']):,}")
 
     CKPT_DIR.mkdir(exist_ok=True)
-    ckpt = CKPT_DIR / f"{args.model}_s{args.seed}.pt"
+    ckpt = CKPT_DIR / f"{args.model}_{args.aug}_s{args.seed}.pt"
     best_f1, best_ep, bad = -1.0, -1, 0
     t0 = time.time()
 
     for ep in range(args.epochs):
         model.train()
         run_loss, n_seen = 0.0, 0
+        use_mix = args.aug == "full"                # Mixup(#8)/CutMix(#9) — 배치 단위
         for x, y in train_dl:
             x, y = x.to(device), y.to(device)
             opt.zero_grad(set_to_none=True)
-            loss = crit(model(x), y)
+            if use_mix and random.random() < 0.5:
+                perm = torch.randperm(x.size(0), device=x.device)
+                if random.random() < 0.5:           # Mixup α=0.3
+                    lam = float(np.random.beta(0.3, 0.3))
+                    x = lam * x + (1 - lam) * x[perm]
+                else:                               # CutMix 면적 1/4–1/2
+                    a = random.uniform(0.25, 0.5)
+                    h = max(1, int(64 * math.sqrt(a)))
+                    w_ = max(1, int(216 * math.sqrt(a)))
+                    r0 = random.randrange(64 - h + 1)
+                    c0 = random.randrange(216 - w_ + 1)
+                    x[:, :, r0:r0 + h, c0:c0 + w_] = x[perm][:, :, r0:r0 + h, c0:c0 + w_]
+                    lam = 1 - (h * w_) / (64 * 216)
+                out = model(x)
+                loss = lam * crit(out, y) + (1 - lam) * crit(out, y[perm])
+            else:
+                loss = crit(model(x), y)
             loss.backward()
             opt.step()
             run_loss += loss.item() * y.size(0)
@@ -186,7 +223,7 @@ def main(argv=None):
     op_recall, fa_h = at_tau(tp_, ty, tau)
 
     res = {
-        "model": args.model, "seed": args.seed, "params": n_par,
+        "model": args.model, "aug": args.aug, "seed": args.seed, "params": n_par,
         "best_epoch": best_ep, "val_macro_f1": round(best_f1, 4),
         "test": {
             "macro_f1": round(macro, 4),
@@ -207,7 +244,7 @@ def main(argv=None):
     hist.append(res)
     path.write_text(json.dumps(hist, indent=1, ensure_ascii=False))
 
-    print(f"\n[{args.model} s{args.seed}] test macro-F1 {macro:.4f} | "
+    print(f"\n[{args.model} aug={args.aug} s{args.seed}] test macro-F1 {macro:.4f} | "
           f"siren P/R/F1 {prec[0]:.3f}/{rec[0]:.3f}/{f1[0]:.3f} | "
           f"운용점(τ={tau:.3f}) siren recall {op_recall:.3f}, FA {fa_h:.0f}/h | "
           f"best ep{best_ep} ({res['train_sec']}s)")
