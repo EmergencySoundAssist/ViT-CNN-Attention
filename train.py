@@ -200,7 +200,10 @@ def main(argv=None):
     }
     RESULTS.mkdir(exist_ok=True)
     path = RESULTS / "ladder.json"
-    hist = json.loads(path.read_text()) if path.exists() else []
+    try:
+        hist = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        hist = []
     hist.append(res)
     path.write_text(json.dumps(hist, indent=1, ensure_ascii=False))
 
