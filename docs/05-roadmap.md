@@ -45,5 +45,6 @@
 | 차종 ID 비핵심 | 피치×사이클로 53%, Airacle 3-클래스에 불필요 |
 | 방향각(TDOA)은 속도에 **직렬** (이후) | 도플러는 시선속도(v·cosθ) → 통과 기하가 속도 추정의 사전정보 ([docs/03](03-doppler-speed.md) §기하 한계) |
 | 마이크는 **4-mic 동기화 어레이** (48 kHz) | 2-mic은 전후 모호, 독립 마이크 ×2는 클럭 드리프트로 TDOA 불가 |
+| 방향각은 **마스크된 GCC-PHAT** (사이렌 배음 빈만) | 전대역 TDOA는 "가장 큰 소리"의 방향 — 검출→f0 마스크→방향 순서로 **분류된 그 소리**의 방향을 잼 ([docs/04](04-architecture-and-comparison.md)) |
 | 추론 tick: 검출 4 Hz · bearing 10 Hz · 속도 1 Hz | 연산이 tick의 ~10%뿐 → 여유를 **경보 지연 단축**에 투입. 1차 경보 목표 = 가청 후 ~1.5 s ([docs/04](04-architecture-and-comparison.md) §지연 예산) |
 | Jetson Orin (RPi5 아님) | GPU+TensorRT → ViT 실용화, 모델 선택 자유 |
