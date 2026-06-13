@@ -82,7 +82,15 @@ Orin(GPU·TensorRT)에서는 둘 다 실시간 여유 → 비교의 초점은 �
 ├── README.md
 ├── requirements.txt
 ├── siren_data.py            # AI Hub 데이터 로더 (NFC 안전, 3-클래스 확장)
-├── doppler_speed.py         # 도플러 속도·방향 모듈 (핵심)
+├── dataset.py               # P0 파이프라인 — 원본단위 split·청크·멜 캐시 (누수 0)
+├── models.py                # 검출 사다리 — PlainCNN / CNNAttn / ViT
+├── train.py                 # 학습·운용점 평가 (macro-F1 · siren recall · FA/h)
+├── augment.py               # 멜 도메인 증강 (배속·잡음·SpecAugment·Mixup)
+├── run_ladder.py            # 사다리 일괄 실행기 (results 기반 멱등 재개)
+├── eval_snr.py              # 저SNR 견고성 스윕 (검출 진짜 판정)
+├── doppler_speed.py         # 도플러 속도·방향 모듈 (방식 A 핵심)
+├── speed_baseline.py        # 방식 A 속도 베이스라인 (정지 큐레이션 + synth_passby)
+├── tdoa_sim.py              # 마이크 어레이 TDOA 정확도 시뮬레이터
 ├── analyze_siren_freq.py    # 사이렌 정지 주파수 실측
 ├── analyze_siren_cycle.py   # 사이클 주기 · 피치×사이클 분리도
 ├── doppler_cycle_test.py    # 사이클 기반 속도 추정 검증
@@ -92,7 +100,8 @@ Orin(GPU·TensorRT)에서는 둘 다 실시간 여유 → 비교의 초점은 �
     ├── 03-doppler-speed.md
     ├── 04-architecture-and-comparison.md
     ├── 05-roadmap.md
-    └── 06-model-design-and-training.md   # 모델 상세 설계 · 증강 논문 근거 · 베이스라인
+    ├── 06-model-design-and-training.md   # 모델 상세 설계 · 증강 논문 근거 · 베이스라인
+    └── 07-cloud-training.md              # RunPod 클라우드 학습 런북
 ```
 
 > **데이터셋은 저장소에 포함하지 않습니다** (AI Hub 라이선스 + 용량). [docs/01-dataset.md](docs/01-dataset.md)에서 받는 법과 배치 경로를 설명합니다.
@@ -123,13 +132,25 @@ python doppler_speed.py
 
 ## 현재 상태
 
-- [x] 데이터 로더 (NFC 이슈 해결)
+- [x] 데이터 로더 (NFC 이슈 해결) + **P0 파이프라인** (`dataset.py` — 원본 단위 split, 누수 0 검증, 멜 캐시)
 - [x] 사이렌 음향 특성 실측 (주파수 · 사이클)
 - [x] 도플러 속도 모듈 + 합성 pass-by 검증 (중앙값 5–8 km/h)
 - [x] Viterbi 문맥 추적 (배음 널뛰기 19.2% → 3.6%)
-- [ ] 속도 단계(tier) 래퍼 + 실시간 스트리밍
-- [ ] 검출 모델 (CNN+Attn vs ViT) 학습 + TensorRT
-- [ ] 방식 B (synth_passby 학습 DL 속도) + 교차검증
+- [x] **검출 사다리 학습** (`models.py`·`train.py` — B1 CNN / B2 CNN+Attn / B3 ViT, 증강 ablation)
+- [x] **저SNR 견고성 스윕** (`eval_snr.py` — 검출 판정은 clean이 아니라 0 dB 운용점에서)
+- [x] **방식 A 속도 베이스라인** (`speed_baseline.py` — 정지 큐레이션 + synth_passby, 3–8 km/h)
+- [x] **TDOA 시뮬레이터** (`tdoa_sim.py` — bearing ±3°@0 dB, 거리 시차 한계 ~30m)
+- [ ] 방식 B/C (synth_passby 학습 DL 속도 head, CNN+Attn vs ViT 백본) + 교차검증 — **P2b**
+- [ ] 젯슨 실하드웨어 TDOA 검증 + TensorRT 통합
+
+### P1 실측 결과 (중요 — clean 정확도는 함정)
+
+- **증강이 견고성의 레버**: 무증강 모델은 0 dB에서 siren recall 0.57~0.70으로 붕괴, 증강하면 0.91~0.92 유지. clean 정확도(0.997)는 모두 천장에 붙어 **모델 변별 불가** → 판정은 **저SNR 운용점**에서.
+- **검출은 CNN+Attn ≈ ViT** (증강 일치 시 0 dB에서 0.910 vs 0.918, 단일시드 노이즈 내). 동률이면 **효율로 CNN+Attn** (7.6× 작음). ViT는 증강 선택에 민감(`wave`는 OK, `full`의 Mixup/CutMix에서 캘리브레이션 저하).
+- **방식 A 물리 속도는 노이즈에 거의 면역** (5 dB까지 3–8 km/h, 기권 1~2%). 약점은 저SNR이 아니라 **차선거리**(d_min 30 m → 8.3 km/h). ⚠ 단 이 수치는 절반이 home-advantage(생성=역산 물리 동일) — 실데이터 검증 필요.
+- **TDOA 방향은 4채널 1개로 완성** (0 dB ±3°). 8채널 거리는 시차 한계로 ~30m 이내만 → **2번째 어레이는 조건부**.
+
+전체 비교·판정 근거 → [docs/04](docs/04-architecture-and-comparison.md)
 - [ ] (이후) TDOA 방향각 — 4-mic 어레이, 방향→속도 직렬 연결
 
 → 전체 로드맵: [docs/05-roadmap.md](docs/05-roadmap.md)
