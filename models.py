@@ -73,10 +73,16 @@ class CNNAttn(nn.Module):
         self.score = nn.Sequential(nn.Linear(128, 64), nn.Tanh(), nn.Linear(64, 1))
         self.cls = _Classifier()
 
-    def forward(self, x, return_attn: bool = False):
+    def features(self, x):
+        """검출 head 앞 context 벡터 (B,128) — 통합모델의 속도/차종 head 공유 입력."""
         h = self.backbone(x).mean(dim=2).permute(0, 2, 1)   # (B,27,128)
         w = torch.softmax(self.score(h).squeeze(-1), dim=1)  # (B,27) 시간축 가중
-        ctx = (h * w.unsqueeze(-1)).sum(dim=1)               # (B,128)
+        return (h * w.unsqueeze(-1)).sum(dim=1)              # (B,128)
+
+    def forward(self, x, return_attn: bool = False):
+        h = self.backbone(x).mean(dim=2).permute(0, 2, 1)
+        w = torch.softmax(self.score(h).squeeze(-1), dim=1)
+        ctx = (h * w.unsqueeze(-1)).sum(dim=1)
         out = self.cls(ctx)
         return (out, w) if return_attn else out
 
@@ -101,12 +107,16 @@ class ViT(nn.Module):
         nn.init.trunc_normal_(self.pos, std=0.02)
         nn.init.trunc_normal_(self.cls_token, std=0.02)
 
-    def forward(self, x):
-        h = self.patch(x).flatten(2).permute(0, 2, 1)                    # (B,216,128)
+    def features(self, x):
+        """검출 head 앞 CLS 특징 (B,128) — 통합모델 공유 입력."""
+        h = self.patch(x).flatten(2).permute(0, 2, 1)
         cls = self.cls_token.expand(h.size(0), -1, -1)
         h = torch.cat([cls, h], dim=1) + self.pos
         h = self.encoder(h)
-        return self.head(self.norm(h)[:, 0])                            # CLS 토큰
+        return self.norm(h)[:, 0]                                       # (B,128)
+
+    def forward(self, x):
+        return self.head(self.features(x))
 
 
 MODELS = {"cnn": PlainCNN, "cnn_attn": CNNAttn, "vit": ViT}
