@@ -120,12 +120,13 @@ class SpeedHead(nn.Module):
         return self.v(self.net(feat)).squeeze(-1)
 
 
-def load_backbone(name, ckpt, device):
+def load_backbone(name, ckpt, device, freeze=True):
     m = M.build(name).to(device)
-    m.load_state_dict(torch.load(ckpt, map_location=device)["model"])
-    m.eval()
+    if ckpt:
+        m.load_state_dict(torch.load(ckpt, map_location=device)["model"])
     for p in m.parameters():
-        p.requires_grad_(False)
+        p.requires_grad_(not freeze)
+    m.eval() if freeze else m.train()
     return m
 
 
@@ -171,6 +172,8 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--pool", type=int, default=120)
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--finetune", action="store_true", help="백본 동결 해제 — 속도로 학습")
+    ap.add_argument("--scratch", action="store_true", help="검출 ckpt 없이 from-scratch")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
 
@@ -184,9 +187,17 @@ def main():
     te_pool = stationary_pool("test", max(30, args.pool // 3), args.seed + 1)
     print(f"  train {len(tr_pool)} · test {len(te_pool)} 정지 클립")
 
-    backbone = load_backbone(args.backbone, args.ckpt, device)
+    freeze = not (args.finetune or args.scratch)
+    backbone = load_backbone(args.backbone, None if args.scratch else args.ckpt, device, freeze=freeze)
     head = SpeedHead().to(device)
-    opt = torch.optim.AdamW(head.parameters(), lr=1e-3, weight_decay=1e-4)
+    mode = "scratch" if args.scratch else ("finetune" if args.finetune else "frozen")
+    if freeze:
+        opt = torch.optim.AdamW(head.parameters(), lr=1e-3, weight_decay=1e-4)
+    else:                                   # 백본은 낮은 lr (전이 보존), head는 높게
+        opt = torch.optim.AdamW([
+            {"params": backbone.parameters(), "lr": 3e-4},
+            {"params": head.parameters(), "lr": 1e-3},
+        ], weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda_factory(args.epochs, 0))
     huber = nn.HuberLoss(delta=5.0)
 
@@ -194,14 +205,20 @@ def main():
                           num_workers=args.workers, worker_init_fn=_WorkerInit(args.seed),
                           persistent_workers=args.workers > 0)
 
-    print(f"[{args.backbone} 속도 head] 동결 백본 + head 학습 · device {device.type}")
+    print(f"[{args.backbone} 속도 {mode}] device {device.type} · backbone "
+          f"{'학습' if not freeze else '동결'}")
     t0 = time.time()
     for ep in range(args.epochs):
         head.train()
+        if not freeze:
+            backbone.train()
         run = 0.0
         for x, v in train_dl:
             x, v = x.to(device), v.to(device)
-            with torch.no_grad():
+            if freeze:
+                with torch.no_grad():
+                    feat = backbone.features(x)
+            else:
                 feat = backbone.features(x)
             loss = huber(head(feat), v)
             opt.zero_grad(set_to_none=True)
