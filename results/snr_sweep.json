@@ -1,0 +1,335 @@
+[
+ {
+  "model": "cnn_attn",
+  "aug": "full",
+  "tau": 0.9765,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9462,
+    "siren_recall_argmax": 0.9928,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9963
+   },
+   "20dB": {
+    "siren_recall": 0.9458,
+    "siren_recall_argmax": 0.9939,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9971
+   },
+   "10dB": {
+    "siren_recall": 0.9017,
+    "siren_recall_argmax": 0.9921,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9962
+   },
+   "5dB": {
+    "siren_recall": 0.836,
+    "siren_recall_argmax": 0.9866,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9941
+   },
+   "0dB": {
+    "siren_recall": 0.6665,
+    "siren_recall_argmax": 0.978,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9865
+   }
+  }
+ },
+ {
+  "model": "cnn_attn",
+  "aug": "none",
+  "tau": 1.0,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9462,
+    "siren_recall_argmax": 0.9899,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9971
+   },
+   "20dB": {
+    "siren_recall": 0.9494,
+    "siren_recall_argmax": 0.9913,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9789
+   },
+   "10dB": {
+    "siren_recall": 0.9086,
+    "siren_recall_argmax": 0.9863,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9732
+   },
+   "5dB": {
+    "siren_recall": 0.836,
+    "siren_recall_argmax": 0.9733,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9644
+   },
+   "0dB": {
+    "siren_recall": 0.7012,
+    "siren_recall_argmax": 0.9173,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9369
+   }
+  }
+ },
+ {
+  "model": "cnn_attn",
+  "aug": "wave",
+  "tau": 0.9999,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9566,
+    "siren_recall_argmax": 0.9957,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9962
+   },
+   "20dB": {
+    "siren_recall": 0.9599,
+    "siren_recall_argmax": 0.9964,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9966
+   },
+   "10dB": {
+    "siren_recall": 0.9505,
+    "siren_recall_argmax": 0.9946,
+    "fa_per_hour": 0.2,
+    "macro_f1": 0.996
+   },
+   "5dB": {
+    "siren_recall": 0.9299,
+    "siren_recall_argmax": 0.9906,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.995
+   },
+   "0dB": {
+    "siren_recall": 0.8569,
+    "siren_recall_argmax": 0.979,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9874
+   }
+  }
+ },
+ {
+  "model": "cnn_attn",
+  "aug": "wave_spec",
+  "tau": 0.9999,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9552,
+    "siren_recall_argmax": 0.9939,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9965
+   },
+   "20dB": {
+    "siren_recall": 0.9566,
+    "siren_recall_argmax": 0.9939,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9967
+   },
+   "10dB": {
+    "siren_recall": 0.9538,
+    "siren_recall_argmax": 0.9931,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9967
+   },
+   "5dB": {
+    "siren_recall": 0.9447,
+    "siren_recall_argmax": 0.9917,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.995
+   },
+   "0dB": {
+    "siren_recall": 0.9097,
+    "siren_recall_argmax": 0.9863,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9915
+   }
+  }
+ },
+ {
+  "model": "cnn",
+  "aug": "none",
+  "tau": 1.0,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9476,
+    "siren_recall_argmax": 0.9917,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9973
+   },
+   "20dB": {
+    "siren_recall": 0.9147,
+    "siren_recall_argmax": 0.9917,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9904
+   },
+   "10dB": {
+    "siren_recall": 0.7926,
+    "siren_recall_argmax": 0.9892,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9816
+   },
+   "5dB": {
+    "siren_recall": 0.7121,
+    "siren_recall_argmax": 0.9671,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9693
+   },
+   "0dB": {
+    "siren_recall": 0.5856,
+    "siren_recall_argmax": 0.8725,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9326
+   }
+  }
+ },
+ {
+  "model": "vit",
+  "aug": "full",
+  "tau": 0.9133,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9621,
+    "siren_recall_argmax": 0.9931,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9965
+   },
+   "20dB": {
+    "siren_recall": 0.9335,
+    "siren_recall_argmax": 0.9939,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9968
+   },
+   "10dB": {
+    "siren_recall": 0.8436,
+    "siren_recall_argmax": 0.9924,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9963
+   },
+   "5dB": {
+    "siren_recall": 0.7103,
+    "siren_recall_argmax": 0.9906,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9956
+   },
+   "0dB": {
+    "siren_recall": 0.5444,
+    "siren_recall_argmax": 0.9686,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.987
+   }
+  }
+ },
+ {
+  "model": "vit",
+  "aug": "none",
+  "tau": 0.9368,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9277,
+    "siren_recall_argmax": 0.9834,
+    "fa_per_hour": 2.9,
+    "macro_f1": 0.9931
+   },
+   "20dB": {
+    "siren_recall": 0.9256,
+    "siren_recall_argmax": 0.9855,
+    "fa_per_hour": 2.2,
+    "macro_f1": 0.9819
+   },
+   "10dB": {
+    "siren_recall": 0.8707,
+    "siren_recall_argmax": 0.9772,
+    "fa_per_hour": 0.9,
+    "macro_f1": 0.9744
+   },
+   "5dB": {
+    "siren_recall": 0.7688,
+    "siren_recall_argmax": 0.9566,
+    "fa_per_hour": 0.6,
+    "macro_f1": 0.9585
+   },
+   "0dB": {
+    "siren_recall": 0.5708,
+    "siren_recall_argmax": 0.8967,
+    "fa_per_hour": 1.7,
+    "macro_f1": 0.9229
+   }
+  }
+ },
+ {
+  "model": "vit",
+  "aug": "wave",
+  "tau": 0.9396,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9624,
+    "siren_recall_argmax": 0.9942,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9969
+   },
+   "20dB": {
+    "siren_recall": 0.9671,
+    "siren_recall_argmax": 0.9946,
+    "fa_per_hour": 0.2,
+    "macro_f1": 0.9969
+   },
+   "10dB": {
+    "siren_recall": 0.9671,
+    "siren_recall_argmax": 0.9939,
+    "fa_per_hour": 0.2,
+    "macro_f1": 0.9968
+   },
+   "5dB": {
+    "siren_recall": 0.9566,
+    "siren_recall_argmax": 0.9895,
+    "fa_per_hour": 0.2,
+    "macro_f1": 0.9953
+   },
+   "0dB": {
+    "siren_recall": 0.918,
+    "siren_recall_argmax": 0.9747,
+    "fa_per_hour": 0.2,
+    "macro_f1": 0.988
+   }
+  }
+ },
+ {
+  "model": "vit",
+  "aug": "wave_spec",
+  "tau": 0.9404,
+  "snr": {
+   "clean": {
+    "siren_recall": 0.9155,
+    "siren_recall_argmax": 0.9946,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.997
+   },
+   "20dB": {
+    "siren_recall": 0.8389,
+    "siren_recall_argmax": 0.996,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9972
+   },
+   "10dB": {
+    "siren_recall": 0.7923,
+    "siren_recall_argmax": 0.9935,
+    "fa_per_hour": 0.2,
+    "macro_f1": 0.9958
+   },
+   "5dB": {
+    "siren_recall": 0.7626,
+    "siren_recall_argmax": 0.9924,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9944
+   },
+   "0dB": {
+    "siren_recall": 0.7005,
+    "siren_recall_argmax": 0.9812,
+    "fa_per_hour": 0.0,
+    "macro_f1": 0.9877
+   }
+  }
+ }
+]
