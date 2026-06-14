@@ -70,7 +70,7 @@ def gen(pool, n, seed, hop, Ln, close=False, snr=None, v=None, d=None, keep_w=Fa
         elif close:                                    # 절반은 근거리 집중(3~12m), 절반은 전범위
             dd = rng.uniform(3, 12) if rng.random() < 0.5 else rng.uniform(5, 30)
         else:
-            dd = rng.uniform(5, 30)
+            dd = rng.uniform(3, 30)                     # 균형: 근거리(3~)까지 포함, 쏠림 없음
         ss = rng.uniform(5, 20) if snr is None else snr
         w_clean = sh.passby_window(seg, sr, vv, dd)
         w = ds.add_noise(w_clean, ss, rng) if ss is not None else w_clean
