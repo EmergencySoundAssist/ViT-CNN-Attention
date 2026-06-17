@@ -113,6 +113,7 @@ def main():
     ap.add_argument("--lam", type=float, default=5.0, help="f0 보조손실 가중")
     ap.add_argument("--fine", action="store_true", help="시간해상도 2배 (hop 256, L 432)")
     ap.add_argument("--close", action="store_true", help="근거리 오버샘플 학습")
+    ap.add_argument("--save", default="", help="학습 후 체크포인트 저장 경로 (Jetson 배포용)")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
@@ -152,6 +153,10 @@ def main():
         sched.step()
         if ep % 5 == 0 or ep == args.epochs - 1:
             print(f"  ep{ep:02d} v-huber {rv/len(Y):.2f} f0-mse {rf/len(Y):.3f} ({time.time()-t0:.0f}s)", flush=True)
+
+    if args.save:
+        torch.save({"model": model.state_dict(), "Ln": Ln, "hop": HOP, "fine": args.fine}, args.save)
+        print(f"  체크포인트 저장: {args.save}")
 
     # 평가: 신경망 vs 물리 (동일 윈도우)
     model.eval()
