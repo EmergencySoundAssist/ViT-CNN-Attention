@@ -58,8 +58,19 @@ def mel_of(w, hop, Ln):
     return ((m - m.mean()) / (m.std() + 1e-5)).astype(np.float32)
 
 
-def gen(pool, n, seed, hop, Ln, close=False, snr=None, v=None, d=None, keep_w=False):
-    """노이즈 멜(입력) + 깨끗한 f0(보조타깃) + v(주타깃) [+ 윈도우]. close=True면 근거리 오버샘플."""
+def mel_of_dom(w, hop, Ln, dom_rng):
+    """mel_of + 채널(도메인) 증강 — 정규화 *전* EQ·대역제한·잔향. 학습 입력 강건화용."""
+    import augment
+    m = _logmel_hop(w, hop)
+    if m.shape[1] < Ln:
+        m = np.pad(m, ((0, 0), (0, Ln - m.shape[1])), constant_values=np.float32(np.log(D.LOG_EPS)))
+    m = augment.domain_augment(m[:, :Ln], dom_rng)
+    return ((m - m.mean()) / (m.std() + 1e-5)).astype(np.float32)
+
+
+def gen(pool, n, seed, hop, Ln, close=False, snr=None, v=None, d=None, keep_w=False, domain=False):
+    """노이즈 멜(입력) + 깨끗한 f0(보조타깃) + v(주타깃) [+ 윈도우]. close=True면 근거리 오버샘플.
+    domain=True면 입력 멜에 채널 증강(EQ·대역제한·잔향) — f0 타깃은 clean 유지."""
     rng = np.random.default_rng(seed)
     M, F, Y, W = [], [], [], []
     for _ in range(n):
@@ -74,7 +85,8 @@ def gen(pool, n, seed, hop, Ln, close=False, snr=None, v=None, d=None, keep_w=Fa
         ss = rng.uniform(5, 20) if snr is None else snr
         w_clean = sh.passby_window(seg, sr, vv, dd)
         w = ds.add_noise(w_clean, ss, rng) if ss is not None else w_clean
-        M.append(mel_of(w, hop, Ln)); F.append(f0_target(w_clean, Ln)); Y.append(np.float32(vv))
+        m = mel_of_dom(w, hop, Ln, rng) if domain else mel_of(w, hop, Ln)
+        M.append(m); F.append(f0_target(w_clean, Ln)); Y.append(np.float32(vv))
         if keep_w:
             W.append(w)
     return np.array(M), np.array(F), np.array(Y), W
@@ -113,6 +125,8 @@ def main():
     ap.add_argument("--lam", type=float, default=5.0, help="f0 보조손실 가중")
     ap.add_argument("--fine", action="store_true", help="시간해상도 2배 (hop 256, L 432)")
     ap.add_argument("--close", action="store_true", help="근거리 오버샘플 학습")
+    ap.add_argument("--domain-aug", action="store_true",
+                    help="채널(EQ·대역제한·잔향) 증강 — sim-to-real 강건성. _dom 체크포인트로 저장")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
@@ -129,7 +143,7 @@ def main():
 
     print(f"학습셋 합성·멜·f0타깃 {args.train}개…")
     t0 = time.time()
-    M, F, Y, _ = gen(tr_pool, args.train, args.seed, HOP, Ln, close=args.close)
+    M, F, Y, _ = gen(tr_pool, args.train, args.seed, HOP, Ln, close=args.close, domain=args.domain_aug)
     print(f"  완료 ({time.time()-t0:.0f}s) 멜{M.shape} f0{F.shape}")
 
     model = NeuralSpeed(Ln).to(device)
@@ -152,6 +166,12 @@ def main():
         sched.step()
         if ep % 5 == 0 or ep == args.epochs - 1:
             print(f"  ep{ep:02d} v-huber {rv/len(Y):.2f} f0-mse {rf/len(Y):.3f} ({time.time()-t0:.0f}s)", flush=True)
+
+    # 체크포인트 저장 (infer.load_speed가 읽는 포맷: model/Ln/hop/fine)
+    RESULTS.mkdir(exist_ok=True)
+    ckpt = f"models/speed_neural{'_dom' if args.domain_aug else ''}.pt"
+    torch.save({"model": model.state_dict(), "Ln": Ln, "hop": HOP, "fine": args.fine}, ckpt)
+    print(f"[저장] {ckpt}")
 
     # 평가: 신경망 vs 물리 (동일 윈도우)
     model.eval()

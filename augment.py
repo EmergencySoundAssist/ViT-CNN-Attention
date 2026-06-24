@@ -140,6 +140,37 @@ class MelAugment:
         return np.ascontiguousarray(x, dtype=np.float32)
 
 
+# ── 도메인(채널) 증강 — 라벨 보존, sim-to-real 강건성용 ───────────────────
+# 피치·타임 워프가 금지된 헤드(속도=글라이드, 차종=배음)에 채널 효과만 흉내.
+# 멜 도메인 근사이며, 특히 잔향은 거친 근사임(실잔향=파형 IR 컨볼루션, 위상·콤필터 무시).
+# 전부 (x−μ)/σ 정규화 후에도 살아남음(모양/시간 변화이지 평탄 게인 아님).
+def domain_augment(x: np.ndarray, rng, p_eq=0.8, p_band=0.5, p_rev=0.6) -> np.ndarray:
+    """정규화 전 로그멜 (64, L) → 채널 증강된 로그멜. EQ·대역제한·잔향 근사 독립 적용."""
+    x = np.array(x, dtype=np.float32, copy=True)
+    DB = np.log(10.0) / 10.0                                  # dB → ln(power)
+    if rng.random() < p_eq:                                   # EQ: 채널/기기 주파수 색
+        n = 5
+        ctrl = rng.uniform(-8.0, 8.0, n) * DB
+        curve = np.interp(np.linspace(0, 1, D.N_MELS), np.linspace(0, 1, n), ctrl)
+        x = x + curve[:, None].astype(np.float32)
+    if rng.random() < p_band:                                 # 대역제한: 코덱/마이크 고·저역 컷
+        hi = int(rng.integers(0, 14))
+        if hi:
+            x[D.N_MELS - hi:] -= np.float32(rng.uniform(8, 25) * DB)
+        lo = int(rng.integers(0, 6))
+        if lo:
+            x[:lo] -= np.float32(rng.uniform(8, 25) * DB)
+    if rng.random() < p_rev:                                  # 잔향 근사: 파워축 시간 1-pole 지수꼬리
+        from scipy.signal import lfilter
+        t60 = rng.uniform(2.0, 9.0)                           # 프레임(≈46–207ms @ hop512) — 차/소공간
+        a = float(np.exp(-1.0 / t60))
+        ps = np.exp(x.astype(np.float64))
+        rev = lfilter([1 - a], [1.0, -a], ps, axis=1)
+        wet = rng.uniform(0.25, 0.75)
+        x = np.log((1 - wet) * ps + wet * rev + D.LOG_EPS).astype(np.float32)
+    return np.ascontiguousarray(x, dtype=np.float32)
+
+
 # ── 수치 sanity 체크 ──────────────────────────────────────────────────────
 if __name__ == "__main__":
     src = D.split_sources(D.index_sources())

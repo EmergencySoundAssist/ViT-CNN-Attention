@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
+import augment
 import dataset as D
 import models as M
 from train import confusion, prf, predict, seed_all, pick_device, lr_lambda_factory, _WorkerInit
@@ -28,8 +29,8 @@ SUB_IDX = {s: i for i, s in enumerate(SUBS)}
 
 
 class SubtypeDataset:
-    def __init__(self, chunks, transform=None):
-        self.chunks, self.transform = chunks, transform
+    def __init__(self, chunks, transform=None, domain=False):
+        self.chunks, self.transform, self.domain = chunks, transform, domain
 
     def __len__(self):
         return len(self.chunks)
@@ -37,6 +38,8 @@ class SubtypeDataset:
     def __getitem__(self, i):
         c = self.chunks[i]
         x = self.transform(c) if self.transform is not None else D.chunk_mel(c)
+        if self.domain:                                   # 채널(EQ·대역제한·잔향) 증강 — 정규화 전
+            x = augment.domain_augment(x, np.random.default_rng())
         x = (x - x.mean()) / (x.std() + 1e-5)
         return torch.from_numpy(np.ascontiguousarray(x))[None], SUB_IDX[c.sub]
 
@@ -58,11 +61,14 @@ def main():
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--aug", default="none", choices=["none", "wave"])
+    ap.add_argument("--domain-aug", action="store_true",
+                    help="채널(EQ·대역제한·잔향) 증강 — sim-to-real 강건성. _dom 체크포인트로 저장")
     ap.add_argument("--workers", type=int, default=6)
     args = ap.parse_args()
 
     seed_all(args.seed)
     device = pick_device()
+    ckpt = f"models/subtype_{args.model}{'_dom' if args.domain_aug else ''}_s{args.seed}.pt"
     src = D.split_sources(D.index_sources())
     tr, va, te = (siren_sub_chunks(src, s) for s in ("train", "val", "test"))
 
@@ -77,7 +83,7 @@ def main():
         transform = MelAugment(args.aug, src, "train", seed=args.seed)
 
     dl_kw = dict(num_workers=args.workers, persistent_workers=args.workers > 0)
-    train_dl = DataLoader(SubtypeDataset(tr, transform), batch_size=64,
+    train_dl = DataLoader(SubtypeDataset(tr, transform, domain=args.domain_aug), batch_size=64,
                           sampler=balanced_sampler(tr), worker_init_fn=_WorkerInit(args.seed), **dl_kw)
     val_dl = DataLoader(SubtypeDataset(va), batch_size=256, **dl_kw)
     test_dl = DataLoader(SubtypeDataset(te), batch_size=256, **dl_kw)
@@ -101,7 +107,7 @@ def main():
         _, _, _, vf1 = prf(confusion(vy, vp.argmax(1)))
         if vf1 > best_f1:
             best_f1, bad = vf1, 0
-            torch.save(model.state_dict(), f"models/subtype_{args.model}_s{args.seed}.pt")
+            torch.save(model.state_dict(), ckpt)
         else:
             bad += 1
         if ep % 5 == 0 or bad >= 8:
@@ -109,7 +115,7 @@ def main():
         if bad >= 8:
             break
 
-    model.load_state_dict(torch.load(f"models/subtype_{args.model}_s{args.seed}.pt", map_location=device))
+    model.load_state_dict(torch.load(ckpt, map_location=device))
     tp, ty = predict(model, test_dl, device)
     cm = confusion(ty, tp.argmax(1))
     prec, rec, f1, macro = prf(cm)
