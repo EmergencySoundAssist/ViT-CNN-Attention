@@ -1,0 +1,17 @@
+siren 차종 청크 — train 19,554 / val 2,180 / test 2,768
+  train: 구급차 10,271 경찰차 4,793 소방차 4,490
+  test: 구급차 1,338 경찰차 736 소방차 694
+  ep00 val macro-F1 0.655 (19s)
+  ep05 val macro-F1 0.777 (69s)
+  ep10 val macro-F1 0.860 (119s)
+  ep15 val macro-F1 0.845 (170s)
+  ep20 val macro-F1 0.868 (225s)
+  ep24 val macro-F1 0.876 (267s)
+
+[cnn_attn 차종] test 정확도 89.2% · macro-F1 0.891 (손수특징 53% 대비, 랜덤 33%)
+혼동행렬 (행=정답, 열=예측):  구급차  경찰차  소방차
+  구급차    1210    112     16   recall 0.90
+  경찰차     105    626      5   recall 0.85
+  소방차      39     23    632   recall 0.91
+
+경찰↔구급 혼동: 217 | 소방 분리도 recall: 0.91

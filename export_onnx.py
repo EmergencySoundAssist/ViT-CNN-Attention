@@ -25,13 +25,22 @@ import infer   # load_model / 전처리 일관 재사용
 
 
 def load_any(ckpt: str, model_arg: str | None, device):
-    """검출 또는 속도 모델 로드 → (model, name, output_names). 파일명으로 분기."""
-    if os.path.basename(ckpt).startswith("speed"):
+    """검출/속도/차종 모델 로드 → (model, name, output_names). 파일명으로 분기."""
+    base = os.path.basename(ckpt)
+    if base.startswith("speed"):
         import speed_neural as sn
         ck = torch.load(ckpt, map_location=device)
         m = sn.NeuralSpeed(ck["Ln"]).to(device).eval()
         m.load_state_dict(ck["model"])
         return m, "speed_neural", ["speed", "f0"]
+    if base.startswith("subtype"):                       # 차종(CNNAttn 3-클래스, raw state_dict)
+        import models
+        rest = base.replace("subtype_", "")
+        name = model_arg or next((n for n in ("cnn_attn", "vit", "cnn") if rest.startswith(n)), "cnn_attn")
+        m = models.build(name).to(device).eval()
+        state = torch.load(ckpt, map_location=device)
+        m.load_state_dict(state["model"] if isinstance(state, dict) and "model" in state else state)
+        return m, f"subtype_{name}", ["logits"]
     m, name = infer.load_model(ckpt, model_arg, device)
     return m, name, ["logits"]
 
