@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 import time
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 
 CLASSES = ("siren", "horn", "noise")
@@ -24,10 +24,14 @@ CFG = {
 }
 TAU_CRIT = 4.0   # 이 마진 이상 + 지속이면 CRITICAL (속도 무관)
 
-# 위험도 tier (속도 v̂ → 정지/접근-느림/접근-빠름). 제품 출력은 km/h가 아니라 이 tier.
-# 정지 deadband: v̂이 작으면 무조건 "정지" — OOD 바닥(~10)이 만드는 false-접근 억제.
+# 위험도 tier. 제품 출력은 km/h가 아니라 tier 문자열.
+# SPEED_TIERS = 방향-미상 모드(speed_tier)의 집합. 방향 헤드가 있으면 dir_tier가
+# {정지, 멀어짐, 접근-느림, 접근-빠름}을 내며 SpeedTracker는 문자열 비교라 둘 다 수용.
+# 정지 deadband: v̂이 작으면 무조건 "정지" — OOD 바닥(~10)이 만드는 false-이동 억제.
+# ⚠ "접근/멀어짐"이 아니라 "이동": 현 속도망은 절대속도만 회귀(방향 미학습) —
+#   멀어지는 사이렌도 v̂이 크면 잡히므로 접근이라 표기하면 거짓. 방향 헤드(P1) 후 복원.
 # ⚠ 경계·deadband는 실주행 캘리 대상(placeholder).
-SPEED_TIERS = ("정지", "접근-느림", "접근-빠름")
+SPEED_TIERS = ("정지", "이동-느림", "이동-빠름")
 
 
 def speed_tier(v: float, deadband: float = 20.0, fast: float = 40.0) -> str:
@@ -36,6 +40,92 @@ def speed_tier(v: float, deadband: float = 20.0, fast: float = 40.0) -> str:
     if v < fast:
         return SPEED_TIERS[1]
     return SPEED_TIERS[2]
+
+
+# 방향 헤드(speed_neural --dir-head) 클래스 순서 = speed_neural.DIR_KO
+DIR_KO = ("정지", "접근", "멀어짐")
+
+
+def dir_tier(dir_idx: int, v: float, fast: float = 40.0) -> str:
+    """방향(정지/접근/멀어짐) × 속도 → 위험도 tier. 정지·멀어짐은 방향 헤드가 판정
+    (deadband 불필요 — still(v=0) 학습으로 바닥 문제를 원인 치료), 접근만 속도로 세분."""
+    if dir_idx == 0:
+        return "정지"
+    if dir_idx == 2:
+        return "멀어짐"
+    return "접근-빠름" if v >= fast else "접근-느림"
+
+
+class SpeedTracker:
+    """v̂(+방향) tick 스무딩 + tier 전환 히스테리시스 — 단일 tick 노이즈 깜빡임 억제.
+    v는 최근 n_med tick 중앙값, 방향은 다수결. 새 후보 tier가 k_switch tick 연속일 때만 전환.
+    ⚠ n_med/k_switch는 tick 수 — 기본값은 0.25s tick 기준(9≈2.2s, 4≈1s).
+    stride가 다르면 호출측에서 스케일해 넘길 것(UnifiedRuntime이 dt 기준으로 계산).
+    update(v)      → 방향 미상: 정지/이동-느림/이동-빠름 (deadband 기반)
+    update(v, dir) → 방향 헤드: 정지/멀어짐/접근-느림/접근-빠름"""
+
+    def __init__(self, n_med: int = 9, k_switch: int = 4):
+        self.buf = deque(maxlen=n_med)
+        self.dbuf = deque(maxlen=n_med)
+        self.k = k_switch
+        self.tier = SPEED_TIERS[0]
+        self._cand, self._run = None, 0
+
+    def update(self, v: float, dir_idx: int | None = None) -> str:
+        self.buf.append(float(v))
+        if dir_idx is not None:
+            self.dbuf.append(int(dir_idx))
+        elif self.dbuf:
+            self.dbuf.clear()      # 방향 신호 끊김 → 즉시 속도-only 폴백(오래된 방향 고착 방지)
+        s = sorted(self.buf)
+        vm = s[len(s) // 2]                          # v 중앙값
+        if self.dbuf:
+            dm = Counter(self.dbuf).most_common(1)[0][0]   # 방향 다수결
+            cand = dir_tier(dm, vm)
+        else:
+            cand = speed_tier(vm)
+        if cand == self.tier:
+            self._cand, self._run = None, 0
+        elif cand == self._cand:
+            self._run += 1
+            if self._run >= self.k:
+                self.tier, self._cand, self._run = cand, None, 0
+        else:
+            self._cand, self._run = cand, 1
+        return self.tier
+
+    def reset(self) -> None:
+        self.buf.clear()
+        self.dbuf.clear()
+        self.tier = SPEED_TIERS[0]
+        self._cand, self._run = None, 0
+
+
+class SubtypeVote:
+    """차종 시간 다수결 — 경보 활성 동안 tick별 argmax를 투표(신뢰 미달 tick은 기권),
+    다수 라벨만 표시해 tick간 라벨 튐(경찰↔구급 진동)을 억제. clear 시 reset."""
+
+    def __init__(self, labels=("구급차", "경찰차", "소방차"), win: int = 24):
+        self.labels = labels
+        self.votes = deque(maxlen=win)               # 클래스 idx만 저장(기권 미저장)
+        self.n_seen = 0
+
+    def add(self, probs, conf: float) -> None:
+        self.n_seen += 1
+        i = int(probs.argmax())
+        if float(probs[i]) >= conf:
+            self.votes.append(i)
+
+    def label(self) -> str:
+        if not self.votes:                           # 유효 투표 0 → 세분화 보류
+            return f"긴급차량({self.n_seen}tick)"
+        cnt = Counter(self.votes)
+        i, c = cnt.most_common(1)[0]
+        return f"{self.labels[i]}({c}/{len(self.votes)}표)"
+
+    def reset(self) -> None:
+        self.votes.clear()
+        self.n_seen = 0
 
 
 class Gate:
@@ -112,8 +202,20 @@ def build_event(kind: str, margin: float, gate: dict | None, subtype: str | None
 
 
 # ── 출력 싱크 ──────────────────────────────────────────────────────────────
+def _status_line(margin: float, state: str, level: str, risk: str | None = None) -> str:
+    """연속 실시간 상태줄(제자리 갱신용). raw 마진 막대 + 안정 게이트 상태.
+    막대: 마진 -2(빈칸)~+10(꽉) 12칸, τ_on≈4칸 지점. raw라 매 tick 흔들림(=실시간)."""
+    n = max(0, min(12, round((margin + 2.0) / 12.0 * 12)))
+    bar = "▓" * n + "░" * (12 - n)
+    st = {"OFF": "대기 ", "RISING": "↑감지", "ON": "●경보", "FALLING": "↓유지"}.get(state, state)
+    active = state in ("ON", "FALLING")
+    lv = f" {level}" if active else ""
+    r = f"  위험도={risk}" if (active and risk) else ""
+    return f"사이렌 [{bar}] {margin:+5.1f}  {st}{lv}{r}"
+
+
 class ConsoleSink:
-    """디버그용. onset/remind/clear 엣지만 출력(매 tick 도배 억제). tty면 색."""
+    """연속 상태줄(매 tick 제자리 갱신=실시간) + 경보 엣지(ONSET/CLEAR 영구 줄). tty면 색."""
     _COLOR = {"CRITICAL": "\033[1;31m", "WARN": "\033[1;33m", "NONE": "\033[2m"}
 
     def __init__(self):
@@ -129,10 +231,21 @@ class ConsoleSink:
         msg = f"[{time.time()-self.t0:6.1f}] {tag:6s} {e.level:8s} {e.label or '해제':4s}  margin={e.margin:+.2f}{risk}{sub}"
         if self.tty:
             msg = self._COLOR.get(e.level, "") + msg + "\033[0m"
-        print(msg, flush=True)
+        # 엣지=영구 줄. tty면 진행 중 상태줄을 지우고(\r\033[K) 새 줄에 출력 → 다음 tick이 그 아래에 상태줄.
+        print(("\r\033[K" if self.tty else "") + msg, flush=True)
+
+    def tick(self, margin: float, state: str, level: str, risk: str | None = None) -> None:
+        """매 tick 연속 상태줄을 제자리 갱신 — 실시간 피드백. tty 아니면 생략(파이프 도배 방지)."""
+        if not self.tty:
+            return
+        active = state in ("ON", "FALLING")
+        col = self._COLOR.get(level if active else "NONE", "")
+        sys.stdout.write("\r\033[K" + col + _status_line(margin, state, level, risk) + "\033[0m")
+        sys.stdout.flush()
 
     def close(self):
-        pass
+        if self.tty:
+            sys.stdout.write("\r\033[K"); sys.stdout.flush()   # 잔여 상태줄 정리
 
 
 class GpioSink:
@@ -168,6 +281,16 @@ class MultiSink:
                 s.emit(e)
             except Exception as ex:                       # 하나 죽어도 나머지 계속
                 print(f"[sink 오류] {type(s).__name__}: {ex}", file=sys.stderr)
+
+    def tick(self, *a, **k):                              # 연속 상태줄 — tick 지원 싱크에만 전달
+        for s in self.sinks:
+            f = getattr(s, "tick", None)
+            if f is None:
+                continue
+            try:
+                f(*a, **k)
+            except Exception:
+                pass
 
     def close(self):
         for s in self.sinks:

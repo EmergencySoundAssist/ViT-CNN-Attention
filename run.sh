@@ -16,4 +16,5 @@ fi
 ENGINES="--speed-engine models/speed_neural.trt --subtype-engine models/subtype_cnn_attn_dom_s42.trt"
 if [ "$1" = "--det-only" ]; then ENGINES=""; shift; fi
 
-exec /usr/bin/python3 -u infer_trt.py --live --device ReSpeaker $ENGINES "$@"
+# stride 0.25: onset 지연 절반(게이트 1.0s→0.5s). 측정근거=정확도 손실 0, 연산 무시가능.
+exec /usr/bin/python3 -u infer_trt.py --live --device ReSpeaker --stride 0.25 $ENGINES "$@"

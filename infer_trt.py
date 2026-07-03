@@ -1,9 +1,10 @@
 """
 infer_trt.py — TensorRT 통합 추론 런타임 (Jetson 배포)
 
-검출(필수) + 차종(siren 게이트일 때만, 잠정·기본 OFF) → 알림 상태기계(alert.py) → Sink.
+검출(필수) + 차종(siren ON일 때만, 잠정·기본 OFF) → 알림 상태기계(alert.py) → Sink.
 판정은 softmax 아니라 **로짓 마진** z[cls]-max(나머지). 속도는 제외(코드 자리만).
 멜 1 FFT/tick 공유, 검출 짧은 창·차종 5초 전체 창 각자 정규화.
+tick 튐 억제: 차종=시간 다수결(SubtypeVote), 속도 tier=중앙값+히스테리시스(SpeedTracker).
 
   $ python3 infer_trt.py --wav clip.wav                      # 파일: raw 검출(마진)
   $ python3 infer_trt.py --live                              # 마이크: 알림 상태기계
@@ -125,6 +126,10 @@ class UnifiedRuntime:
         self.conf = conf
         self.g_siren = alert.Gate(alert.CFG["siren"], dt)
         self.g_horn = alert.Gate(alert.CFG["horn"], dt)
+        # 시간상수(중앙값창≈2.2s·히스테리시스≈1s·투표창≈6s)를 stride와 무관하게 유지
+        self.vtrack = alert.SpeedTracker(n_med=max(3, round(2.25 / dt)) | 1,
+                                         k_switch=max(2, round(1.0 / dt)))
+        self.svote = alert.SubtypeVote(SUBS, win=max(8, round(6.0 / dt)))
 
     def step(self, y: np.ndarray):
         raw = raw_mel(y)                                          # FFT 1회
@@ -135,20 +140,35 @@ class UnifiedRuntime:
         sg = self.g_siren.update(m_siren)
         hg = self.g_horn.update(m_horn)
 
-        v_dbg = self.speed.scalar(_norm(raw)[None, None]) if self.speed is not None else None  # 미검증
-        risk = alert.speed_tier(v_dbg) if v_dbg is not None else None
+        v_dbg, dir_idx = None, None
+        if self.speed is not None:                               # 미검증(잠정)
+            outs = self.speed(_norm(raw)[None, None])
+            v_dbg = float(next(a for a in outs.values() if a.size == 1).reshape(-1)[0])
+            d3 = next((a for a in outs.values() if a.size == 3), None)   # 방향 헤드(_dir 엔진)
+            if d3 is not None:
+                dir_idx = int(d3.reshape(-1).argmax())   # (1,3)/(3,) 모두 클래스 idx 보장
 
-        sub = None
+        sub, risk = None, None
         if sg["active"]:                                         # siren > horn 우선
             kind, margin, gate = "siren", m_siren, sg
-            if self.subtype is not None:                         # 차종: 마진 게이트일 때만(argmax 아님)
-                sp = _softmax(self.subtype.logits(_norm(raw)[None, None]))   # 5초 전체 창
-                sub = subtype_label(sp, self.conf)
+            if v_dbg is not None:                                # tier는 스무딩+히스테리시스+방향다수결 경유
+                risk = self.vtrack.update(v_dbg, dir_idx)
+            if self.subtype is not None:
+                if self.g_siren.state == "ON":                   # FALLING(사이렌 꺼진 꼬리) 제외
+                    sp = _softmax(self.subtype.logits(_norm(raw)[None, None]))   # 5초 전체 창
+                    self.svote.add(sp, self.conf)
+                if self.svote.n_seen:
+                    # FALLING 중엔 새 투표 없이 직전 다수결 동결 표시(의도).
+                    # ON 재진입(같은 경보 지속)은 누적 유지, clear에서만 리셋(의도).
+                    sub = self.svote.label()                     # 다수결 라벨(단일 tick 아님)
         elif hg["active"]:
             kind, margin, gate = "horn", m_horn, hg
         else:
             kind, margin = "none", 0.0
             gate = {"onset": False, "remind": False, "clear": sg["clear"] or hg["clear"]}
+        if sg["clear"]:                                          # 경보 해제 → 다음 경보 위해 리셋
+            self.vtrack.reset()
+            self.svote.reset()
         return alert.build_event(kind, margin, gate, sub, risk), z, m_siren, m_horn, v_dbg
 
 
@@ -169,8 +189,8 @@ def live(rt: UnifiedRuntime, sink, stride_s: float, device=None, verbose=False) 
         buf.extend(indata[:, 0])
 
     print(f"마이크: {dev['name']} @ {cap_sr}Hz → {ds.SR}Hz · {stride_s}s tick · Ctrl-C 종료")
-    print("(기본: 경보 이벤트[ONSET/REMIND/CLEAR]만. 워밍업 5s 무탐.)"
-          + ("\n[--debug] tick마다 상세(pred·margin·v̂) 출력 — v̂은 미검증" if verbose else ""))
+    print("(연속 실시간 상태줄 + 경보 엣지[ONSET/CLEAR] 영구표시. 워밍업 5s.)"
+          + ("\n[--debug] tick마다 상세(pred·margin·v̂) 줄 — v̂은 미검증" if verbose else ""))
     try:
         with sd.InputStream(channels=1, samplerate=cap_sr, callback=cb, device=device):
             while True:
@@ -181,11 +201,13 @@ def live(rt: UnifiedRuntime, sink, stride_s: float, device=None, verbose=False) 
                 if cap_sr != ds.SR:
                     y = resample_poly(y, ds.SR // g, cap_sr // g).astype(np.float32)
                 ev, z, ms, mh, v = rt.step(y)
-                sink.emit(ev)
+                sink.emit(ev)                                    # 경보 엣지(영구 줄)
                 if verbose:
                     cls = CLASSES[int(np.argmax(z))]
                     vs = f"  v̂={v:5.1f}→{alert.speed_tier(v)}" if v is not None else ""
                     print(f"  [tick] pred={cls:5s}  m_siren={ms:+.2f}{vs} (미검증)", flush=True)
+                else:
+                    sink.tick(ms, rt.g_siren.state, ev.level, ev.risk)   # 연속 상태줄(제자리 갱신)
     except KeyboardInterrupt:
         sink.close()
         print("\n종료.")

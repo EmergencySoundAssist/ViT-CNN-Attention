@@ -30,9 +30,12 @@ def load_any(ckpt: str, model_arg: str | None, device):
     if base.startswith("speed"):
         import speed_neural as sn
         ck = torch.load(ckpt, map_location=device)
-        m = sn.NeuralSpeed(ck["Ln"]).to(device).eval()
+        if ck.get("Ln") != 216:
+            raise SystemExit(f"fine 모델(Ln={ck.get('Ln')}) export 미지원 — dummy가 (1,1,64,216) 고정")
+        has_dir = bool(ck.get("dir", False))
+        m = sn.NeuralSpeed(ck["Ln"], dir_head=has_dir).to(device).eval()
         m.load_state_dict(ck["model"])
-        return m, "speed_neural", ["speed", "f0"]
+        return m, "speed_neural", (["speed", "f0", "dir"] if has_dir else ["speed", "f0"])
     if base.startswith("subtype"):                       # 차종(CNNAttn 3-클래스, raw state_dict)
         import models
         rest = base.replace("subtype_", "")

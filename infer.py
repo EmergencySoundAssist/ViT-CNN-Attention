@@ -65,7 +65,7 @@ def load_speed(ckpt: str, device):
     """속도 신경망 로드. 멜 사양(hop/Ln)이 검출과 같을 때만 멜 공유 가능 → 검증."""
     import speed_neural as sn
     ck = torch.load(ckpt, map_location=device)
-    m = sn.NeuralSpeed(ck["Ln"]).to(device).eval()
+    m = sn.NeuralSpeed(ck["Ln"], dir_head=ck.get("dir", False)).to(device).eval()
     m.load_state_dict(ck["model"])
     if (ck["hop"], ck["Ln"]) != (ds.HOP, ds.N_FRAMES):
         raise ValueError(f"속도 멜 사양 {ck['hop']}/{ck['Ln']} ≠ 검출 {ds.HOP}/{ds.N_FRAMES} — 멜 분리 필요")
