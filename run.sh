@@ -13,7 +13,12 @@ if [ -n "$CARD" ]; then
     pactl set-card-profile "$CARD" off 2>/dev/null && echo "[run.sh] ReSpeaker를 PulseAudio에서 해제(캡처 hw 확보)"
 fi
 
-ENGINES="--speed-engine models/speed_neural.trt --subtype-engine models/subtype_cnn_attn_dom_s42.trt"
+# 속도: 방향 헤드(_dir) 엔진이 빌드돼 있으면 우선(정지/멀어짐/접근 tier), 없으면 구엔진
+SPEED="models/speed_neural.trt"
+[ -f models/speed_neural_dir.trt ] && SPEED="models/speed_neural_dir.trt"
+ENGINES="--speed-engine $SPEED --subtype-engine models/subtype_cnn_attn_dom_s42.trt"
+# 예비검출(2s 창) 엔진 있으면 이중 창: PRE 예비경보 ≈2.7s + 확정 5.5s
+[ -f models/cnn_attn_full_s42_87f.trt ] && ENGINES="$ENGINES --fast-engine models/cnn_attn_full_s42_87f.trt"
 if [ "$1" = "--det-only" ]; then ENGINES=""; shift; fi
 
 # stride 0.25: onset 지연 절반(게이트 1.0s→0.5s). 측정근거=정확도 손실 0, 연산 무시가능.

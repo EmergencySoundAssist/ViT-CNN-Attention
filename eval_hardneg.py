@@ -24,11 +24,12 @@ import infer
 
 
 @torch.no_grad()
-def margins_of(y: np.ndarray, det, device, stride_s: float) -> list[float]:
-    """오디오 → tick별 siren 마진 z[siren]-max(나머지)."""
+def margins_of(y: np.ndarray, det, device, stride_s: float, det_frames: int | None = None) -> list[float]:
+    """오디오 → tick별 siren 마진 z[siren]-max(나머지). det_frames로 짧은 창(예비 채널) 평가."""
     out = []
     for _, m in infer.windows(y, stride_s):
-        x = torch.from_numpy(np.ascontiguousarray(infer._norm(m)))[None, None].to(device)
+        md = m if not det_frames else m[:, -det_frames:]
+        x = torch.from_numpy(np.ascontiguousarray(infer._norm(md)))[None, None].to(device)
         z = det(x)[0].cpu().numpy()
         out.append(float(z[0] - max(z[1], z[2])))
     return out
@@ -46,8 +47,11 @@ def main(argv=None) -> int:
     ap.add_argument("--sanity", action="store_true", help="test split horn/noise로 하네스 검증")
     ap.add_argument("--ckpt", default="models/cnn_attn_full_s42.pt")
     ap.add_argument("--stride", type=float, default=0.5, help="tick 간격(초)")
+    ap.add_argument("--window", type=float, default=None,
+                    help="검출 창(초) — 예비 채널(2s) 오경보 평가용. 기본 5초 전체")
     ap.add_argument("--limit", type=int, default=200, help="sanity 파일 수 제한")
     args = ap.parse_args(argv)
+    det_frames = (1 + int(args.window * ds.SR) // ds.HOP) if args.window else None
 
     device = infer.pick_device()
     det, name = infer.load_model(args.ckpt, None, device)
@@ -65,7 +69,8 @@ def main(argv=None) -> int:
     if not files:
         print("wav 없음"); return 1
 
-    print(f"모델 {name} · {src_desc} · stride {args.stride}s")
+    print(f"모델 {name} · {src_desc} · stride {args.stride}s"
+          + (f" · 창 {args.window}s(예비 채널)" if args.window else " · 창 5s(확정 채널)"))
     all_m, total_sec, fa_files = [], 0.0, []
     for i, f in enumerate(files):
         try:
@@ -73,7 +78,7 @@ def main(argv=None) -> int:
         except Exception:
             continue
         total_sec += len(y) / ds.SR
-        mg = margins_of(y, det, device, args.stride)
+        mg = margins_of(y, det, device, args.stride, det_frames)
         if not mg:
             continue
         all_m.extend(mg)

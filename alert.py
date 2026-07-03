@@ -21,6 +21,9 @@ LABEL_KO = {"siren": "사이렌", "horn": "경적", "noise": ""}
 CFG = {
     "siren": dict(tau_on=2.0, tau_off=0.5, N_on=2, T_hang=2.5, K_vote=3, M_win=5, T_remind=3.0),
     "horn":  dict(tau_on=2.5, tau_off=1.0, N_on=2, T_hang=1.0, K_vote=2, M_win=3, T_remind=4.0),
+    # 예비(PRE) 게이트 — 짧은 창(2s) 검출용: 빨리 켜지고(≈2.7s) 빨리 접음(hangover 1s),
+    # 리마인더 없음(확정 채널이 담당). 5s 확정 게이트의 recall은 건드리지 않는다.
+    "siren_fast": dict(tau_on=2.0, tau_off=0.5, N_on=2, T_hang=1.0, K_vote=3, M_win=5, T_remind=9999.0),
 }
 TAU_CRIT = 4.0   # 이 마진 이상 + 지속이면 CRITICAL (속도 무관)
 
@@ -188,10 +191,15 @@ class AlertEvent:
 
 
 def build_event(kind: str, margin: float, gate: dict | None, subtype: str | None = None,
-                risk: str | None = None, tau_crit: float = TAU_CRIT) -> AlertEvent:
-    """게이트 판정 → 표시 이벤트. **레벨은 margin 기반**(확률 임계 폐기)."""
+                risk: str | None = None, tau_crit: float = TAU_CRIT,
+                pre: bool = False) -> AlertEvent:
+    """게이트 판정 → 표시 이벤트. **레벨은 margin 기반**(확률 임계 폐기).
+    pre=True면 짧은 창 예비경보 — 레벨 PRE 고정(확정 전 단계, 진동 짧게)."""
     if kind == "siren":
-        level = "CRITICAL" if margin >= tau_crit else "WARN"   # 속도 무관, 마진+지속
+        if pre:
+            level = "PRE"
+        else:
+            level = "CRITICAL" if margin >= tau_crit else "WARN"   # 속도 무관, 마진+지속
         return AlertEvent(level, "siren", LABEL_KO["siren"], margin,
                           gate["onset"], gate["remind"], gate["clear"], subtype, risk)
     if kind == "horn":
@@ -216,7 +224,7 @@ def _status_line(margin: float, state: str, level: str, risk: str | None = None)
 
 class ConsoleSink:
     """연속 상태줄(매 tick 제자리 갱신=실시간) + 경보 엣지(ONSET/CLEAR 영구 줄). tty면 색."""
-    _COLOR = {"CRITICAL": "\033[1;31m", "WARN": "\033[1;33m", "NONE": "\033[2m"}
+    _COLOR = {"CRITICAL": "\033[1;31m", "WARN": "\033[1;33m", "PRE": "\033[1;33m", "NONE": "\033[2m"}
 
     def __init__(self):
         self.tty = sys.stdout.isatty()

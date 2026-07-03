@@ -54,23 +54,28 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default=None, help="검출 모델명 강제 (기본: 파일명 추론)")
     ap.add_argument("--out", default=None, help="출력 .onnx (기본: ckpt와 동명)")
     ap.add_argument("--opset", type=int, default=17, help="ONNX opset (TensorRT 호환 17)")
+    ap.add_argument("--frames", type=int, default=216,
+                    help="시간 프레임 수 (검출 짧은창 엔진용, 예: 2초=87). 속도/차종은 216 고정")
     args = ap.parse_args(argv)
 
     device = torch.device("cpu")                         # export는 CPU
     model, name, onames = load_any(args.ckpt, args.model, device)
-    out = args.out or os.path.splitext(args.ckpt)[0] + ".onnx"
+    if args.frames != 216 and (name == "speed_neural" or name.startswith("subtype")):
+        raise SystemExit("--frames는 검출 전용 — 속도/차종은 216 고정 창")
+    suffix = "" if args.frames == 216 else f"_{args.frames}f"
+    out = args.out or os.path.splitext(args.ckpt)[0] + suffix + ".onnx"
 
-    dummy = torch.randn(1, 1, 64, 216)                   # (1,1,64,216) 로그멜
+    dummy = torch.randn(1, 1, 64, args.frames)           # (1,1,64,F) 로그멜
     torch.onnx.export(model, dummy, out, input_names=["mel"], output_names=onames,
                       opset_version=args.opset, dynamo=False)   # 레거시: GRU 충실
-    print(f"[내보냄] {name} → {out}  outputs={onames} (고정 batch=1)")
+    print(f"[내보냄] {name} → {out}  outputs={onames} (고정 batch=1, {args.frames}f)")
 
     # 검증: onnxruntime vs PyTorch 출력별 일치
     import onnxruntime as ort
     sess = ort.InferenceSession(out, providers=["CPUExecutionProvider"])
     ok = True
     for _ in range(4):
-        x = np.random.randn(1, 1, 64, 216).astype(np.float32)
+        x = np.random.randn(1, 1, 64, args.frames).astype(np.float32)
         with torch.no_grad():
             ref = model(torch.from_numpy(x))
         ref = ref if isinstance(ref, tuple) else (ref,)

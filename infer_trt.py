@@ -16,11 +16,19 @@ from __future__ import annotations
 import argparse
 
 import numpy as np
-import tensorrt as trt
-from cuda.bindings import runtime as cudart
 
 import alert
 import dataset as ds
+
+trt = cudart = None            # 젯슨 전용 — TRTModel 첫 사용 시 lazy import (맥은 .pt 백엔드)
+
+
+def _lazy_trt():
+    global trt, cudart
+    if trt is None:
+        import tensorrt as _trt
+        from cuda.bindings import runtime as _cudart
+        trt, cudart = _trt, _cudart
 
 CLASSES = ds.CLASSES
 PAD = float(np.log(ds.LOG_EPS))
@@ -66,6 +74,7 @@ def subtype_label(probs: np.ndarray, conf: float) -> str:
 
 class TRTModel:
     def __init__(self, path: str):
+        _lazy_trt()
         logger = trt.Logger(trt.Logger.ERROR)
         with open(path, "rb") as f:
             self.engine = trt.Runtime(logger).deserialize_cuda_engine(f.read())
@@ -114,18 +123,55 @@ class TRTModel:
         return float(next(a for a in self(x).values() if a.size == 1).reshape(-1)[0])
 
 
+class TorchModel:
+    """PyTorch 체크포인트(.pt) 백엔드 — TRTModel과 동일 인터페이스(맥 개발/검증용).
+    젯슨 없이도 이중 창 PRE·방향 tier까지 같은 UnifiedRuntime으로 실행 가능."""
+
+    def __init__(self, ckpt: str, kind: str):
+        import torch
+        import infer as inf
+        self._torch, self.dev = torch, inf.pick_device()
+        if kind == "speed":
+            self.m = inf.load_speed(ckpt, self.dev)
+        elif kind == "subtype":
+            self.m = inf.load_subtype(ckpt, None, self.dev)
+        else:
+            self.m = inf.load_model(ckpt, None, self.dev)[0]
+        self.m.eval()
+
+    def __call__(self, x: np.ndarray) -> dict:
+        with self._torch.no_grad():
+            out = self.m(self._torch.from_numpy(np.ascontiguousarray(x)).to(self.dev))
+        out = out if isinstance(out, tuple) else (out,)
+        return {f"o{i}": o.cpu().numpy() for i, o in enumerate(out)}
+
+    def logits(self, x: np.ndarray) -> np.ndarray:
+        return self(x)["o0"].reshape(-1)
+
+
+def load_engine(path: str, kind: str):
+    """.trt → TensorRT(젯슨), .pt → PyTorch(맥). 러너 코드는 동일."""
+    return TorchModel(path, kind) if path.endswith(".pt") else TRTModel(path)
+
+
 class UnifiedRuntime:
     """검출(마진→상태기계) + 차종(siren 게이트시, 잠정). 속도 제외. 멜 1FFT 공유."""
 
     def __init__(self, det_engine, subtype_engine=None, speed_engine=None,
-                 det_window=None, conf=0.6, dt=0.5):
-        self.det = TRTModel(det_engine)
-        self.subtype = TRTModel(subtype_engine) if subtype_engine else None
-        self.speed = TRTModel(speed_engine) if speed_engine else None   # 디버그/확인용(미검증)
+                 det_window=None, conf=0.6, dt=0.5, fast_engine=None):
+        self.det = load_engine(det_engine, "det")
+        self.subtype = load_engine(subtype_engine, "subtype") if subtype_engine else None
+        self.speed = load_engine(speed_engine, "speed") if speed_engine else None   # 디버그/확인용(미검증)
+        # 이중 창: fast(2s 예비, ≈2.7s 반응) + det(5s 확정, recall 무손실). 같은 가중치, 창만 다름.
+        self.fast = load_engine(fast_engine, "det") if fast_engine else None
+        self.fast_frames = (self.fast.io[self.fast.in_name]["shape"][3]      # TRT: 엔진이 창 크기 보유
+                            if self.fast is not None and hasattr(self.fast, "io")
+                            else (frames_for(2.0) if self.fast else None))   # torch: 2초 기본
         self.det_frames = frames_for(det_window) if det_window else None
         self.conf = conf
         self.g_siren = alert.Gate(alert.CFG["siren"], dt)
         self.g_horn = alert.Gate(alert.CFG["horn"], dt)
+        self.g_fast = alert.Gate(alert.CFG["siren_fast"], dt) if self.fast else None
         # 시간상수(중앙값창≈2.2s·히스테리시스≈1s·투표창≈6s)를 stride와 무관하게 유지
         self.vtrack = alert.SpeedTracker(n_med=max(3, round(2.25 / dt)) | 1,
                                          k_switch=max(2, round(1.0 / dt)))
@@ -139,6 +185,11 @@ class UnifiedRuntime:
         m_horn = float(z[1] - max(z[0], z[2]))
         sg = self.g_siren.update(m_siren)
         hg = self.g_horn.update(m_horn)
+        fg, m_fast = None, 0.0
+        if self.fast is not None:                                # 예비(2s) 게이트 — 매 tick 갱신
+            zf = self.fast.logits(_norm(raw[:, -self.fast_frames:])[None, None])
+            m_fast = float(zf[0] - max(zf[1], zf[2]))
+            fg = self.g_fast.update(m_fast)
 
         v_dbg, dir_idx = None, None
         if self.speed is not None:                               # 미검증(잠정)
@@ -148,8 +199,8 @@ class UnifiedRuntime:
             if d3 is not None:
                 dir_idx = int(d3.reshape(-1).argmax())   # (1,3)/(3,) 모두 클래스 idx 보장
 
-        sub, risk = None, None
-        if sg["active"]:                                         # siren > horn 우선
+        sub, risk, pre = None, None, False
+        if sg["active"]:                                         # 확정 siren > 예비 > horn
             kind, margin, gate = "siren", m_siren, sg
             if v_dbg is not None:                                # tier는 스무딩+히스테리시스+방향다수결 경유
                 risk = self.vtrack.update(v_dbg, dir_idx)
@@ -161,15 +212,18 @@ class UnifiedRuntime:
                     # FALLING 중엔 새 투표 없이 직전 다수결 동결 표시(의도).
                     # ON 재진입(같은 경보 지속)은 누적 유지, clear에서만 리셋(의도).
                     sub = self.svote.label()                     # 다수결 라벨(단일 tick 아님)
+        elif fg is not None and fg["active"]:                    # 예비: 사이렌 가능성(확정 전)
+            kind, margin, gate, pre = "siren", m_fast, fg, True  # 짧은 진동·PRE 표시, 리마인더 없음
         elif hg["active"]:
             kind, margin, gate = "horn", m_horn, hg
         else:
             kind, margin = "none", 0.0
-            gate = {"onset": False, "remind": False, "clear": sg["clear"] or hg["clear"]}
+            gate = {"onset": False, "remind": False,
+                    "clear": sg["clear"] or hg["clear"] or bool(fg and fg["clear"])}
         if sg["clear"]:                                          # 경보 해제 → 다음 경보 위해 리셋
             self.vtrack.reset()
             self.svote.reset()
-        return alert.build_event(kind, margin, gate, sub, risk), z, m_siren, m_horn, v_dbg
+        return alert.build_event(kind, margin, gate, sub, risk, pre=pre), z, m_siren, m_horn, v_dbg
 
 
 def live(rt: UnifiedRuntime, sink, stride_s: float, device=None, verbose=False) -> None:
@@ -218,6 +272,8 @@ def main(argv=None) -> int:
     ap.add_argument("--engine", default="models/cnn_attn_full_s42.trt", help="검출 엔진")
     ap.add_argument("--subtype-engine", default=None, help="차종 엔진(.trt). 주면 siren시 차종(잠정)")
     ap.add_argument("--speed-engine", default=None, help="속도 엔진(.trt). 디버그 확인용 — tick마다 v̂(미검증, 경보 미사용)")
+    ap.add_argument("--fast-engine", default=None,
+                    help="예비검출 엔진(.trt, 2초 창). 주면 확정(5s) 전에 PRE 예비경보(≈2.7s)")
     ap.add_argument("--wav", help="파일 모드 (raw 검출)")
     ap.add_argument("--live", action="store_true", help="마이크 라이브 (알림 상태기계)")
     ap.add_argument("--det-window", type=float, default=None, help="검출 전용 창(초). 짧으면 onset 빠름")
@@ -232,7 +288,7 @@ def main(argv=None) -> int:
         device = int(args.device) if args.device and args.device.isdigit() else args.device
         rt = UnifiedRuntime(args.engine, subtype_engine=args.subtype_engine,
                             speed_engine=args.speed_engine, det_window=args.det_window,
-                            conf=args.conf, dt=args.stride)
+                            conf=args.conf, dt=args.stride, fast_engine=args.fast_engine)
         live(rt, alert.make_sink(args.output), args.stride, device=device, verbose=args.debug)
         return 0
 
