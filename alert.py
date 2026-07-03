@@ -19,7 +19,10 @@ LABEL_KO = {"siren": "사이렌", "horn": "경적", "noise": ""}
 
 # 마진(z[cls]-max(나머지)) 기준 기본 설정 — tick dt=0.5s 가정. ⚠ S0(닮은꼴) 캘리 전 placeholder.
 CFG = {
-    "siren": dict(tau_on=2.0, tau_off=0.5, N_on=2, T_hang=2.5, K_vote=3, M_win=5, T_remind=3.0),
+    # τ_on 1.5 근거(2026-07-03 실주행 녹음): 저SNR 실환경(차내, 앞 구급차)서 마진이 0~2에
+    # 살아 τ2.0은 25s+ 무경보(첫 경보 34s), τ1.5는 6.2s·커버리지 9→21s. FA 검증: in-domain
+    # 비-siren max -3.7, 합성 닮은꼴(알람/음악/처프/노이즈) max -0.01 — 전부 미발화.
+    "siren": dict(tau_on=1.5, tau_off=0.5, N_on=2, T_hang=2.5, K_vote=3, M_win=5, T_remind=3.0),
     "horn":  dict(tau_on=2.5, tau_off=1.0, N_on=2, T_hang=1.0, K_vote=2, M_win=3, T_remind=4.0),
     # 예비(PRE) 게이트 — 짧은 창(2s) 검출용: 빨리 켜지고(≈2.7s) 빨리 접음(hangover 1s),
     # 리마인더 없음(확정 채널이 담당). 5s 확정 게이트의 recall은 건드리지 않는다.
