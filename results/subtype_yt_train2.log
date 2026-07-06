@@ -1,0 +1,21 @@
+AI-Hub train 19,554 / 유튜브 창 538 (구급차:188 경찰차:175 소방차:175) / yt-frac 0.4
+  ep00 loss 0.698  AI-Hub val 85.0%  (9s)
+  ep01 loss 0.480  AI-Hub val 85.7%  (13s)
+  ep02 loss 0.413  AI-Hub val 86.5%  (16s)
+  ep03 loss 0.359  AI-Hub val 86.8%  (20s)
+  ep04 loss 0.311  AI-Hub val 87.7%  (24s)
+  ep05 loss 0.286  AI-Hub val 86.0%  (28s)
+  ep06 loss 0.276  AI-Hub val 87.2%  (32s)
+  ep07 loss 0.262  AI-Hub val 87.4%  (36s)
+  ep08 loss 0.228  AI-Hub val 87.2%  (40s)
+  ep09 loss 0.228  AI-Hub val 87.4%  (44s)
+[저장] models/subtype_cnn_attn_yt_s42.pt
+
+AI-Hub test: 85.7%  (기존 _dom 89.2% — 회귀 확인용)
+held-out(학습 미포함 실채널 클립):
+  경찰차__police1             정답 경찰차  예측 구급차  ❌ (22창)
+  경찰차__police2             정답 경찰차  예측 경찰차  ✅ (6창)
+  구급차__ambulance1          정답 구급차  예측 구급차  ✅ (3창)
+  소방차__fire1               정답 소방차  예측 경찰차  ❌ (14창)
+  소방차__fire2               정답 소방차  예측 소방차  ✅ (14창)
+  → 3/5 (파인튜닝 전 1/5)
