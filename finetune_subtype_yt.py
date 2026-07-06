@@ -32,9 +32,12 @@ from train import pick_device, seed_all
 class YTMelDataset:
     """유튜브 사이렌 창(raw 멜 npz). 채널증강 → 창별 정규화 — SubtypeDataset과 동일 순서."""
 
-    def __init__(self, npz, domain=True):
+    def __init__(self, npz, domain=True, holdout_vids=()):
         d = np.load(npz, allow_pickle=True)
-        self.X, self.Y = d["X"], d["Y"]
+        self.X, self.Y, self.V = d["X"], d["Y"], d["V"]
+        if holdout_vids:                                   # 영상 단위 제외(누수 방지·held-out 확장)
+            keep = ~np.array([any(p in str(v) for p in holdout_vids) for v in self.V])
+            self.X, self.Y, self.V = self.X[keep], self.Y[keep], self.V[keep]
         self.domain = domain
 
     def __len__(self):
@@ -86,6 +89,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=10)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--yt-frac", type=float, default=0.4, help="배치 내 유튜브 비율 기대값")
+    ap.add_argument("--holdout-vids", default="", help="학습 제외 유튜브 영상 id(부분문자열, 콤마) — held-out 확장용")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--workers", type=int, default=6)
     args = ap.parse_args()
@@ -95,7 +99,8 @@ def main():
     src = D.split_sources(D.index_sources())
     tr, va, te = (siren_sub_chunks(src, s) for s in ("train", "val", "test"))
     ai_ds = SubtypeDataset(tr, domain=True)                    # 채널증강 유지
-    yt_ds = YTMelDataset(args.npz, domain=True)
+    hv = tuple(p.strip() for p in args.holdout_vids.split(",") if p.strip())
+    yt_ds = YTMelDataset(args.npz, domain=True, holdout_vids=hv)
     yt_y = yt_ds.Y
     print(f"AI-Hub train {len(ai_ds):,} / 유튜브 창 {len(yt_ds)} "
           f"({' '.join(f'{s}:{int((yt_y==i).sum())}' for i, s in enumerate(SUBS))}) / yt-frac {args.yt_frac}")

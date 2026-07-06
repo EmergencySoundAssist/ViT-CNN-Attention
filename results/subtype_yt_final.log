@@ -1,0 +1,27 @@
+AI-Hub train 19,554 / 유튜브 창 799 (구급차:188 경찰차:178 소방차:433) / yt-frac 0.4
+  ep00 loss 0.822  AI-Hub val 85.0%  (9s)
+  ep01 loss 0.551  AI-Hub val 85.6%  (13s)
+  ep02 loss 0.479  AI-Hub val 86.4%  (17s)
+  ep03 loss 0.418  AI-Hub val 86.2%  (21s)
+  ep04 loss 0.365  AI-Hub val 86.8%  (24s)
+  ep05 loss 0.358  AI-Hub val 85.3%  (28s)
+  ep06 loss 0.318  AI-Hub val 86.6%  (32s)
+  ep07 loss 0.319  AI-Hub val 87.6%  (35s)
+  ep08 loss 0.271  AI-Hub val 86.2%  (39s)
+  ep09 loss 0.266  AI-Hub val 86.9%  (42s)
+[저장] models/subtype_cnn_attn_yt_s42.pt
+
+AI-Hub test: 85.3%  (기존 _dom 89.2% — 회귀 확인용)
+held-out(학습 미포함 실채널 클립):
+  경찰차__FXr3h2jj9to         정답 경찰차  예측 경찰차  ✅ (8창)
+  경찰차__khWAXw4bqGk         정답 경찰차  예측 경찰차  ✅ (26창)
+  경찰차__police1             정답 경찰차  예측 구급차  ❌ (22창)
+  경찰차__police2             정답 경찰차  예측 구급차  ❌ (6창)
+  구급차__JVRS65kpYOI         정답 구급차  예측 구급차  ✅ (47창)
+  구급차__SMkDO8pz8Lo         정답 구급차  예측 구급차  ✅ (3창)
+  구급차__ambulance1          정답 구급차  예측 구급차  ✅ (3창)
+  소방차__Ca2CDMDKRJI         정답 소방차  예측 소방차  ✅ (50창)
+  소방차__fire1               정답 소방차  예측 경찰차  ❌ (14창)
+  소방차__fire2               정답 소방차  예측 소방차  ✅ (14창)
+  소방차__uKh9k9FpTmk         정답 소방차  예측 소방차  ✅ (14창)
+  → 8/11 (파인튜닝 전 1/5)
