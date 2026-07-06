@@ -16,6 +16,11 @@ done
 echo "[1/2] 예비검출(2s 창) 엔진…"
 "$TRTEXEC" --onnx=models/cnn_attn_full_s42_87f.onnx \
         --saveEngine=models/cnn_attn_full_s42_87f.trt --fp16 > /dev/null
+if [ -f models/cnn_attn_full_s42_65f.onnx ]; then
+    echo "[+] 예비검출(1.5s 창, PRE ≈1.8s) 엔진…"
+    "$TRTEXEC" --onnx=models/cnn_attn_full_s42_65f.onnx \
+            --saveEngine=models/cnn_attn_full_s42_65f.trt --fp16 > /dev/null
+fi
 echo "[2/2] 속도+방향(_dir) 엔진…"
 "$TRTEXEC" --onnx=models/speed_neural_dir.onnx \
         --saveEngine=models/speed_neural_dir.trt --fp16 > /dev/null

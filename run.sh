@@ -20,9 +20,12 @@ SPEED="models/speed_neural.trt"
 SUBTYPE="models/subtype_cnn_attn_dom_s42.trt"
 [ -f models/subtype_cnn_attn_yt_s42.trt ] && SUBTYPE="models/subtype_cnn_attn_yt_s42.trt"
 ENGINES="--speed-engine $SPEED --subtype-engine $SUBTYPE"
-# 예비검출(2s 창) 엔진 있으면 이중 창: PRE 예비경보 ≈2.7s + 확정 5.5s
-[ -f models/cnn_attn_full_s42_87f.trt ] && ENGINES="$ENGINES --fast-engine models/cnn_attn_full_s42_87f.trt"
+# 예비검출 엔진 있으면 이중 창: PRE 예비경보(1.5s창 ≈1.8s / 2s창 ≈2.7s) + 확정
+FAST=""
+[ -f models/cnn_attn_full_s42_87f.trt ] && FAST="models/cnn_attn_full_s42_87f.trt"
+[ -f models/cnn_attn_full_s42_65f.trt ] && FAST="models/cnn_attn_full_s42_65f.trt"
+[ -n "$FAST" ] && ENGINES="$ENGINES --fast-engine $FAST"
 if [ "$1" = "--det-only" ]; then ENGINES=""; shift; fi
 
-# stride 0.25: onset 지연 절반(게이트 1.0s→0.5s). 측정근거=정확도 손실 0, 연산 무시가능.
-exec /usr/bin/python3 -u infer_trt.py --live --device ReSpeaker --stride 0.25 $ENGINES "$@"
+# stride 0.15: 게이트 확정 0.3s + PRE(1.5s창) 1.76s 실측. 연산: 검출 0.16ms×2+속도 12ms @6.7Hz — 여유.
+exec /usr/bin/python3 -u infer_trt.py --live --device ReSpeaker --stride 0.15 $ENGINES "$@"

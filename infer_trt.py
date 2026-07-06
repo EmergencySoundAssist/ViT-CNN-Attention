@@ -166,7 +166,8 @@ class UnifiedRuntime:
         self.fast = load_engine(fast_engine, "det") if fast_engine else None
         self.fast_frames = (self.fast.io[self.fast.in_name]["shape"][3]      # TRT: 엔진이 창 크기 보유
                             if self.fast is not None and hasattr(self.fast, "io")
-                            else (frames_for(2.0) if self.fast else None))   # torch: 2초 기본
+                            else (frames_for(1.5) if self.fast else None))   # torch: 1.5초(배포와 동일)
+        self.last_dir = None                                                  # 방향 raw 즉시값(표시용)
         self.det_frames = frames_for(det_window) if det_window else None
         self.conf = conf
         self.g_siren = alert.Gate(alert.CFG["siren"], dt)
@@ -198,6 +199,7 @@ class UnifiedRuntime:
             d3 = next((a for a in outs.values() if a.size == 3), None)   # 방향 헤드(_dir 엔진)
             if d3 is not None:
                 dir_idx = int(d3.reshape(-1).argmax())   # (1,3)/(3,) 모두 클래스 idx 보장
+        self.last_dir = dir_idx                          # 상태줄 즉시 표시용(경보 tier는 스무딩)
 
         sub, risk, pre = None, None, False
         if sg["active"]:                                         # 확정 siren > 예비 > horn
@@ -261,7 +263,7 @@ def live(rt: UnifiedRuntime, sink, stride_s: float, device=None, verbose=False) 
                     vs = f"  v̂={v:5.1f}→{alert.speed_tier(v)}" if v is not None else ""
                     print(f"  [tick] pred={cls:5s}  m_siren={ms:+.2f}{vs} (미검증)", flush=True)
                 else:
-                    sink.tick(ms, rt.g_siren.state, ev.level, ev.risk)   # 연속 상태줄(제자리 갱신)
+                    sink.tick(ms, rt.g_siren.state, ev.level, ev.risk, rt.last_dir)   # 연속 상태줄
     except KeyboardInterrupt:
         sink.close()
         print("\n종료.")
