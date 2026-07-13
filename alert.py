@@ -9,6 +9,7 @@ alert.py — 검출 tick → 안정 알림 상태기계 + 출력 싱크 (순수 
 """
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -160,6 +161,8 @@ class ProximityTracker:
         self.buf = deque(maxlen=max(1, round(t_med / dt)))     # Δ 중앙값 스무딩(tick 튐 억제)
         self.tbuf = deque(maxlen=max(4, round(t_trend / dt)))  # 추세(↗/↘) 판정창
         self.bg = None
+        self.delta_db: float | None = None                     # 최근 Δ 수치 — 스트림/디스플레이용
+        self.rate_db: float | None = None                      # 추세창 레벨 상승 dB(양수=접근) — 접근속도 대용
 
     def update(self, level_db: float, quiet: bool) -> str | None:
         """매 tick 호출. quiet=배경 갱신 허용. 반환: '근접(+23dB↗)' 꼴(배경 미형성이면 None)."""
@@ -171,15 +174,18 @@ class ProximityTracker:
         self.buf.append(level_db - self.bg)
         s = sorted(self.buf)
         med = s[len(s) // 2]
+        self.delta_db = med
         self.tbuf.append(med)
         arrow = ""
+        self.rate_db = None
         h = len(self.tbuf) // 2
         if h >= 2:
             older = sorted(list(self.tbuf)[:h])[h // 2]
             newer = sorted(list(self.tbuf)[h:])[(len(self.tbuf) - h) // 2]
-            if newer - older >= 2.0:
+            self.rate_db = newer - older                       # 추세창(~t_trend) 레벨 상승 dB
+            if self.rate_db >= 2.0:
                 arrow = "↗"                                    # 커지는 중(접근 정황)
-            elif newer - older <= -2.0:
+            elif self.rate_db <= -2.0:
                 arrow = "↘"
         tier = next(t for th, t in self.TIERS if med >= th)
         return f"{tier}({med:+.0f}dB{arrow})"
@@ -188,6 +194,8 @@ class ProximityTracker:
         """경보 해제 시 — 추세·스무딩만 리셋, 배경(bg)은 유지."""
         self.buf.clear()
         self.tbuf.clear()
+        self.delta_db = None
+        self.rate_db = None
 
 
 class Gate:
@@ -314,8 +322,9 @@ class ConsoleSink:
         print(("\r\033[K" if self.tty else "") + msg, flush=True)
 
     def tick(self, margin: float, state: str, level: str, risk: str | None = None,
-             dir_raw: int | None = None, prox: str | None = None) -> None:
-        """매 tick 연속 상태줄을 제자리 갱신 — 실시간 피드백. tty 아니면 생략(파이프 도배 방지)."""
+             dir_raw: int | None = None, prox: str | None = None, **_extra) -> None:
+        """매 tick 연속 상태줄을 제자리 갱신 — 실시간 피드백. tty 아니면 생략(파이프 도배 방지).
+        _extra(prox_db·subtype 등)는 스트림 sink용 — 콘솔은 무시."""
         if not self.tty:
             return
         active = state in ("ON", "FALLING", "PRE")
@@ -326,6 +335,63 @@ class ConsoleSink:
     def close(self):
         if self.tty:
             sys.stdout.write("\r\033[K"); sys.stdout.flush()   # 잔여 상태줄 정리
+
+
+def _split_subtype(s: str | None):
+    """'구급차(0.73)' → ('구급차', 0.73). 색깔=class, 신뢰=conf로 파싱분리(디스플레이 무파싱).
+    None/형식오류면 (None, None) 또는 (class, None)."""
+    if not s:
+        return None, None
+    cls, _, rest = s.partition("(")
+    try:
+        return (cls or None), round(float(rest.rstrip(")")), 2)
+    except ValueError:
+        return (cls or None), None
+
+
+class UdpSink:
+    """tick(연속)·이벤트(엣지)를 JSON 데이터그램으로 스트림 — LED바/화면 시각화용.
+    수신·렌더·융합은 수신측(별도 작업자) 담당 — 여기선 원시 수치만 실어보냄.
+    UDP fire-and-forget이라 디스플레이가 없거나 죽어도 경보 런타임 무영향(안전 우선).
+    기본 127.0.0.1:8737. tick은 stride 주기(기본 6.7Hz)."""
+
+    def __init__(self, host: str = "127.0.0.1", port: int = 8737):
+        import socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setblocking(False)
+        self.addr = (host, port)
+        self.t0 = time.time()
+
+    def _send(self, d: dict) -> None:
+        try:
+            self.sock.sendto(json.dumps(d, ensure_ascii=False).encode(), self.addr)
+        except OSError:
+            pass                                   # 수신자 부재/버퍼 가득 — 조용히 스킵
+
+    def emit(self, e: AlertEvent) -> None:
+        if not (e.onset or e.remind or e.clear):
+            return
+        sub_cls, sub_conf = _split_subtype(e.subtype)
+        self._send(dict(type="event", t=round(time.time() - self.t0, 2),
+                        tag="onset" if e.onset else ("remind" if e.remind else "clear"),
+                        level=e.level, kind=e.kind, margin=round(e.margin, 2),
+                        risk=e.risk, prox=e.prox, subtype=e.subtype,
+                        subtype_class=sub_cls, subtype_conf=sub_conf))
+
+    def tick(self, margin: float, state: str, level: str, risk: str | None = None,
+             dir_raw: int | None = None, prox: str | None = None,
+             prox_db: float | None = None, subtype: str | None = None,
+             approach_rate: float | None = None) -> None:
+        sub_cls, sub_conf = _split_subtype(subtype)
+        self._send(dict(type="tick", t=round(time.time() - self.t0, 2),
+                        margin=round(margin, 2), state=state, level=level, risk=risk,
+                        dir=(DIR_KO[dir_raw] if dir_raw is not None else None),
+                        prox=prox, prox_db=(None if prox_db is None else round(prox_db, 1)),
+                        approach_rate=(None if approach_rate is None else round(approach_rate, 1)),
+                        subtype=subtype, subtype_class=sub_cls, subtype_conf=sub_conf))
+
+    def close(self):
+        self.sock.close()
 
 
 class GpioSink:
@@ -390,13 +456,22 @@ class MultiSink:
 
 
 def make_sink(spec: str) -> MultiSink:
-    """'console' / 'console,gpio' 등 콤마 문자열 → MultiSink."""
+    """'console' / 'console,gpio' / 'console,udp' / 'udp:9000' / 'udp:192.168.0.5:8737'
+    콤마 문자열 → MultiSink. udp는 LED바 디스플레이 스트림(led_display.py 수신)."""
     reg = {"console": ConsoleSink, "gpio": GpioSink}
     sinks = []
     for name in (s.strip() for s in spec.split(",") if s.strip()):
-        if name not in reg:
-            raise ValueError(f"알 수 없는 sink: {name} (가능: {list(reg)})")
-        sinks.append(reg[name]())
+        base, _, arg = name.partition(":")
+        if base == "udp":
+            host, port = "127.0.0.1", 8737
+            if arg:
+                host, _, p = arg.rpartition(":")
+                host, port = (host or "127.0.0.1"), int(p)
+            sinks.append(UdpSink(host, port))
+            continue
+        if base not in reg:
+            raise ValueError(f"알 수 없는 sink: {name} (가능: {list(reg) + ['udp[:host][:port]']})")
+        sinks.append(reg[base]())
     return MultiSink(sinks or [ConsoleSink()])
 
 

@@ -368,7 +368,9 @@ def live(rt: UnifiedRuntime, sink, stride_s: float, device=None, verbose=False) 
                     if st in ("OFF", "RISING") and rt.g_fast is not None \
                             and rt.g_fast.state in ("ON", "FALLING"):
                         st = "PRE"      # 예비만 활성 — 상태줄도 PRE(구버전은 '대기'로 오표시)
-                    sink.tick(ms, st, ev.level, ev.risk, rt.last_dir, ev.prox)   # 연속 상태줄
+                    sink.tick(ms, st, ev.level, ev.risk, rt.last_dir, ev.prox,
+                              prox_db=rt.prox.delta_db, subtype=ev.subtype,
+                              approach_rate=rt.prox.rate_db)                       # 연속 상태줄(+수치)
     except KeyboardInterrupt:
         sink.close()
         print("\n종료.")
