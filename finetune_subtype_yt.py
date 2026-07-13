@@ -124,6 +124,9 @@ def main():
 
     va_ds = SubtypeDataset(va)
     t0 = time.time()
+    # best 선택 기준 = AI-Hub val (in-domain 회귀 방지). held-out 5클립은 선택엔 표본이 작아
+    # 부적합 — 모니터링만. 구버전은 마지막 epoch를 무조건 저장(하필 나쁜 epoch면 그대로 배포).
+    best_acc, best_state = -1.0, None
     for ep in range(args.epochs):
         model.train()
         run = n = 0
@@ -134,11 +137,19 @@ def main():
             run += loss.item() * len(y); n += len(y)
         model.eval()
         va_acc = eval_chunks(model, va_ds, device)
-        print(f"  ep{ep:02d} loss {run/n:.3f}  AI-Hub val {va_acc*100:.1f}%  ({time.time()-t0:.0f}s)", flush=True)
+        mark = ""
+        if va_acc > best_acc:
+            best_acc = va_acc
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+            mark = " ←best"
+        print(f"  ep{ep:02d} loss {run/n:.3f}  AI-Hub val {va_acc*100:.1f}%  ({time.time()-t0:.0f}s){mark}",
+              flush=True)
 
+    if best_state is not None:
+        model.load_state_dict(best_state)
     ckpt = f"models/subtype_cnn_attn_yt_s{args.seed}.pt"
     torch.save({"model": model.state_dict()}, ckpt)
-    print(f"[저장] {ckpt}")
+    print(f"[저장] {ckpt} (AI-Hub val best {best_acc*100:.1f}%)")
 
     model.eval()
     te_acc = eval_chunks(model, SubtypeDataset(te), device)
