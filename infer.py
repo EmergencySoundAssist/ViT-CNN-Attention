@@ -1,9 +1,10 @@
 """
-infer.py — 검출 추론 런타임 (배포용, docs/04 §실시간 운용)
+infer.py — 맥 개발·평가용 추론 (⚠ 배포 런타임 아님 — 그건 infer_trt.py + run.sh)
 
 체크포인트 로드 → WAV → 슬라이딩 5 s 윈도우 → {siren, horn, noise} tick.
 전처리(멜·정규화)는 dataset.py를 **그대로 재사용** → 학습/추론 skew 원천 차단.
-지금은 파일 슬라이스 입력. 라이브 마이크는 windows()만 교체하면 됨.
+모델 로더(load_model/load_speed/load_subtype)와 windows()는 eval_*·finetune_*·
+infer_trt(.pt 백엔드)가 공용으로 import하는 라이브러리 역할.
 
   $ python infer.py --wav clip.wav
   $ python infer.py --wav clip.wav --ckpt models/vit_full_s42.pt --stride 0.25

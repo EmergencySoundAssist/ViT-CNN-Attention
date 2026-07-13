@@ -1,6 +1,10 @@
 """
 speed_head.py — P2b: 통합모델 속도 head (방식 B/C) 학습 + 방식 A 대비
 
+⚠ 상태: 실험(동결 백본 head)은 실패로 **종결** — 현역 속도 모델은 speed_neural.py.
+  단, 여기의 synth_passby 등 합성 유틸을 speed_neural/speed_seq/eval_robust가
+  import하는 **현역 라이브러리**이기도 하다 — 삭제 금지.
+
 통합 모델: **검출 백본 동결** → 속도 head (docs/04 §축3, docs/06 §3.1).
   - 입력: 5초 윈도우 (검출·배포와 동일) — 방식 A의 12초 베이스라인보다 어려움(부분 전이)
   - 학습: synth_passby(v, d_min, SNR) on-the-fly, 라벨 = 우리가 정한 v (정확)
