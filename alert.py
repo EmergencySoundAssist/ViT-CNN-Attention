@@ -10,6 +10,7 @@ alert.py — 검출 tick → 안정 알림 상태기계 + 출력 싱크 (순수 
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -17,17 +18,24 @@ from dataclasses import dataclass
 CLASSES = ("siren", "horn", "noise")
 LABEL_KO = {"siren": "사이렌", "horn": "경적", "noise": ""}
 
-# 마진(z[cls]-max(나머지)) 기준 기본 설정 — tick dt=0.5s 가정. ⚠ S0(닮은꼴) 캘리 전 placeholder.
+# 마진(z[cls]-max(나머지)) 기준 기본 설정. 시간상수는 **초 단위** — Gate가 dt(=stride)로
+# tick 수 환산하므로 stride를 바꿔도 실효 동작 유지. (기존 tick 단위 N_on/K/M은 stride
+# 0.5→0.15 이행 때 디바운스·투표창이 3.3× 조용히 약해지는 결함 — vtrack/svote만 스케일됐었음.)
+# 아래 초값은 2026-07 라이브 튜닝 시점(stride 0.15)의 실효 동작과 동일: N_on=2 · K3/M5.
+# ⚠ S0(닮은꼴) FA 캘리는 stride 0.5로 측정됐던 것 — eval_hardneg --stride 0.15 재실행 필요.
 CFG = {
     # τ_on 1.2 근거(2026-07-06 라이브): 저음압 사이렌이 마진 0.9~1.5에 배회해 1.5 미달로 무경보.
     # (앞서 1.5 근거: 실주행 저SNR서 2.0은 34s 무경보→1.5로 6.2s.) FA 안전마진: in-domain
     # 비-siren max -3.7, 합성 닮은꼴 max -0.01(처프) — 1.2와 갭 충분. 더 내리는 건(1.0↓)
     # 실도로 negative(바람·브레이크음) 데이터 확보 전 금지.
-    "siren": dict(tau_on=1.2, tau_off=0.5, N_on=2, T_hang=2.5, K_vote=3, M_win=5, T_remind=3.0),
-    "horn":  dict(tau_on=2.5, tau_off=1.0, N_on=2, T_hang=1.0, K_vote=2, M_win=3, T_remind=4.0),
-    # 예비(PRE) 게이트 — 짧은 창(2s) 검출용: 빨리 켜지고(≈2.7s) 빨리 접음(hangover 1s),
+    "siren": dict(tau_on=1.2, tau_off=0.5, t_on=0.3, t_vote=0.75, k_frac=0.6,
+                  T_hang=2.5, T_remind=3.0),
+    "horn":  dict(tau_on=2.5, tau_off=1.0, t_on=0.3, t_vote=0.45, k_frac=0.67,
+                  T_hang=1.0, T_remind=4.0),
+    # 예비(PRE) 게이트 — 짧은 창(1.5~2s) 검출용: 빨리 켜지고 빨리 접음(hangover 1s),
     # 리마인더 없음(확정 채널이 담당). 5s 확정 게이트의 recall은 건드리지 않는다.
-    "siren_fast": dict(tau_on=2.0, tau_off=0.5, N_on=2, T_hang=1.0, K_vote=3, M_win=5, T_remind=9999.0),
+    "siren_fast": dict(tau_on=2.0, tau_off=0.5, t_on=0.3, t_vote=0.75, k_frac=0.6,
+                       T_hang=1.0, T_remind=9999.0),
 }
 TAU_CRIT = 4.0   # 이 마진 이상 + 지속이면 CRITICAL (속도 무관)
 
@@ -135,29 +143,80 @@ class SubtypeVote:
         self.n_seen = 0
 
 
+class ProximityTracker:
+    """사이렌 대역 레벨(dB re full-scale) → 배경(비경보 EMA) 대비 ΔdB → 거리감 tier + 추세.
+
+    절대 거리·SPL은 불가: 마이크 미캘리브레이션 + 사이렌 원음압 편차(차종·지향성·반사).
+    배경 대비 상대 레벨(Δ)만 신뢰 가능 — 마이크 게인이 달라져도 Δ는 불변.
+    배경은 quiet(모든 게이트 OFF + 마진 음수) tick에서만 EMA 갱신 → 접근 중 오염 방지.
+    ⚠ tier 경계(20/10 dB)는 실주행 캘리 전 placeholder.
+    ⚠ 마이크 AGC가 켜져 있으면 레벨이 눌려 무의미 — ReSpeaker AGC OFF 확인 필수.
+    ⚠ 사이렌 한복판에서 부팅하면 배경이 오염됨(quiet 복귀 후 T_bg에 걸쳐 자가 회복)."""
+
+    TIERS = ((20.0, "근접"), (10.0, "중간"), (float("-inf"), "원거리"))
+
+    def __init__(self, dt: float, t_bg: float = 30.0, t_med: float = 0.6, t_trend: float = 2.4):
+        self.a_bg = min(1.0, dt / t_bg)
+        self.buf = deque(maxlen=max(1, round(t_med / dt)))     # Δ 중앙값 스무딩(tick 튐 억제)
+        self.tbuf = deque(maxlen=max(4, round(t_trend / dt)))  # 추세(↗/↘) 판정창
+        self.bg = None
+
+    def update(self, level_db: float, quiet: bool) -> str | None:
+        """매 tick 호출. quiet=배경 갱신 허용. 반환: '근접(+23dB↗)' 꼴(배경 미형성이면 None)."""
+        if self.bg is None:
+            self.bg = level_db
+            return None
+        if quiet:
+            self.bg += self.a_bg * (level_db - self.bg)
+        self.buf.append(level_db - self.bg)
+        s = sorted(self.buf)
+        med = s[len(s) // 2]
+        self.tbuf.append(med)
+        arrow = ""
+        h = len(self.tbuf) // 2
+        if h >= 2:
+            older = sorted(list(self.tbuf)[:h])[h // 2]
+            newer = sorted(list(self.tbuf)[h:])[(len(self.tbuf) - h) // 2]
+            if newer - older >= 2.0:
+                arrow = "↗"                                    # 커지는 중(접근 정황)
+            elif newer - older <= -2.0:
+                arrow = "↘"
+        tier = next(t for th, t in self.TIERS if med >= th)
+        return f"{tier}({med:+.0f}dB{arrow})"
+
+    def reset_trend(self) -> None:
+        """경보 해제 시 — 추세·스무딩만 리셋, 배경(bg)은 유지."""
+        self.buf.clear()
+        self.tbuf.clear()
+
+
 class Gate:
     """1클래스 디바운스+히스테리시스+hangover+투표+리마인더 상태기계.
-    update(margin) → dict(active, onset, remind, clear)."""
+    update(margin) → dict(active, onset, remind, clear).
+    t_on/t_vote/k_frac(초·비율)를 dt로 tick 수 환산 — stride 변경에 실효 동작 불변."""
 
     def __init__(self, cfg: dict, dt: float):
         self.cfg, self.dt = cfg, dt
+        self.n_on = max(1, round(cfg["t_on"] / dt))                  # 연속 상회 tick 수
+        self.m_win = max(self.n_on, round(cfg["t_vote"] / dt))      # 투표창 tick 수
+        self.k_vote = min(self.m_win, max(self.n_on, round(cfg["k_frac"] * self.m_win)))
         self.state = "OFF"
         self.run = 0
         self.hang = 0.0
         self.since_remind = 0.0
-        self.votes = deque(maxlen=cfg["M_win"])
+        self.votes = deque(maxlen=self.m_win)
 
     def update(self, margin: float) -> dict:
         c = self.cfg
         on_hi = margin >= c["tau_on"]
         on_lo = margin >= c["tau_off"]
         self.votes.append(1 if on_hi else 0)
-        voted = sum(self.votes) >= c["K_vote"]
+        voted = sum(self.votes) >= self.k_vote
         prev = self.state
 
         if self.state in ("OFF", "RISING"):
             self.run = self.run + 1 if on_hi else 0
-            if self.run >= c["N_on"] and voted:
+            if self.run >= self.n_on and voted:
                 self.state = "ON"; self.hang = c["T_hang"]; self.since_remind = 0.0
             else:
                 self.state = "RISING" if self.run > 0 else "OFF"
@@ -192,11 +251,12 @@ class AlertEvent:
     clear: bool       # 해제
     subtype: str | None = None   # "긴급차량(0.71)" tier=ood, 기본 None
     risk: str | None = None      # 위험도 tier(정지/접근-느림/접근-빠름) — 속도엔진 있을 때만
+    prox: str | None = None      # 거리감 "근접(+23dB↗)" — 배경 대비 상대 레벨, 절대거리 아님
 
 
 def build_event(kind: str, margin: float, gate: dict | None, subtype: str | None = None,
                 risk: str | None = None, tau_crit: float = TAU_CRIT,
-                pre: bool = False) -> AlertEvent:
+                pre: bool = False, prox: str | None = None) -> AlertEvent:
     """게이트 판정 → 표시 이벤트. **레벨은 margin 기반**(확률 임계 폐기).
     pre=True면 짧은 창 예비경보 — 레벨 PRE 고정(확정 전 단계, 진동 짧게)."""
     if kind == "siren":
@@ -205,28 +265,31 @@ def build_event(kind: str, margin: float, gate: dict | None, subtype: str | None
         else:
             level = "CRITICAL" if margin >= tau_crit else "WARN"   # 속도 무관, 마진+지속
         return AlertEvent(level, "siren", LABEL_KO["siren"], margin,
-                          gate["onset"], gate["remind"], gate["clear"], subtype, risk)
+                          gate["onset"], gate["remind"], gate["clear"], subtype, risk, prox)
     if kind == "horn":
         return AlertEvent("WARN", "horn", LABEL_KO["horn"], margin,
-                          gate["onset"], gate["remind"], gate["clear"], None, None)
+                          gate["onset"], gate["remind"], gate["clear"], None, None, None)
     return AlertEvent("NONE", "none", "", 0.0, False, False,
-                      gate["clear"] if gate else False, None, None)
+                      gate["clear"] if gate else False, None, None, None)
 
 
 # ── 출력 싱크 ──────────────────────────────────────────────────────────────
 def _status_line(margin: float, state: str, level: str, risk: str | None = None,
-                 dir_raw: int | None = None) -> str:
+                 dir_raw: int | None = None, prox: str | None = None) -> str:
     """연속 실시간 상태줄(제자리 갱신용). raw 마진 막대 + 안정 게이트 상태.
     막대: 마진 -2(빈칸)~+10(꽉) 12칸, τ_on≈4칸 지점. raw라 매 tick 흔들림(=실시간).
-    dir_raw = 방향 헤드의 tick 즉시값(스무딩 전) — 표시만 즉시, 경보 tier는 스무딩 유지."""
+    dir_raw = 방향 헤드의 tick 즉시값(스무딩 전) — 표시만 즉시, 경보 tier는 스무딩 유지.
+    state="PRE" = 예비 게이트만 활성(확정 대기) — 구버전은 '대기'로 오표시했음."""
     n = max(0, min(12, round((margin + 2.0) / 12.0 * 12)))
     bar = "▓" * n + "░" * (12 - n)
-    st = {"OFF": "대기 ", "RISING": "↑감지", "ON": "●경보", "FALLING": "↓유지"}.get(state, state)
-    active = state in ("ON", "FALLING")
+    st = {"OFF": "대기 ", "RISING": "↑감지", "ON": "●경보", "FALLING": "↓유지",
+          "PRE": "◐예비"}.get(state, state)
+    active = state in ("ON", "FALLING", "PRE")
     lv = f" {level}" if active else ""
     r = f"  위험도={risk}" if (active and risk) else ""
+    p = f"  거리감≈{prox}" if (active and prox) else ""
     d = f"  지금={DIR_KO[dir_raw]}" if (active and dir_raw is not None) else ""
-    return f"사이렌 [{bar}] {margin:+5.1f}  {st}{lv}{r}{d}"
+    return f"사이렌 [{bar}] {margin:+5.1f}  {st}{lv}{r}{p}{d}"
 
 
 class ConsoleSink:
@@ -242,21 +305,22 @@ class ConsoleSink:
             return
         tag = "ONSET" if e.onset else ("REMIND" if e.remind else "CLEAR")
         risk = f"  위험도={e.risk}" if e.risk else ""
+        px = f"  거리감≈{e.prox}" if e.prox else ""
         sub = f"  차종={e.subtype}(잠정)" if e.subtype else ""
-        msg = f"[{time.time()-self.t0:6.1f}] {tag:6s} {e.level:8s} {e.label or '해제':4s}  margin={e.margin:+.2f}{risk}{sub}"
+        msg = f"[{time.time()-self.t0:6.1f}] {tag:6s} {e.level:8s} {e.label or '해제':4s}  margin={e.margin:+.2f}{risk}{px}{sub}"
         if self.tty:
             msg = self._COLOR.get(e.level, "") + msg + "\033[0m"
         # 엣지=영구 줄. tty면 진행 중 상태줄을 지우고(\r\033[K) 새 줄에 출력 → 다음 tick이 그 아래에 상태줄.
         print(("\r\033[K" if self.tty else "") + msg, flush=True)
 
     def tick(self, margin: float, state: str, level: str, risk: str | None = None,
-             dir_raw: int | None = None) -> None:
+             dir_raw: int | None = None, prox: str | None = None) -> None:
         """매 tick 연속 상태줄을 제자리 갱신 — 실시간 피드백. tty 아니면 생략(파이프 도배 방지)."""
         if not self.tty:
             return
-        active = state in ("ON", "FALLING")
+        active = state in ("ON", "FALLING", "PRE")
         col = self._COLOR.get(level if active else "NONE", "")
-        sys.stdout.write("\r\033[K" + col + _status_line(margin, state, level, risk, dir_raw) + "\033[0m")
+        sys.stdout.write("\r\033[K" + col + _status_line(margin, state, level, risk, dir_raw, prox) + "\033[0m")
         sys.stdout.flush()
 
     def close(self):
@@ -265,10 +329,12 @@ class ConsoleSink:
 
 
 class GpioSink:
-    """진동(1차)+LED. Jetson.GPIO lazy. ⚠ 미완성 스텁 — 핀 활성화(DTO)·PWM 검증 필요."""
+    """진동(1차)+LED. Jetson.GPIO lazy. ⚠ 미완성 스텁 — 핀 활성화(DTO)·PWM 검증 필요.
+    진동 OFF는 Timer로 비동기 — 기존 time.sleep은 stride 0.15 기준 tick 2~4개를 블로킹했음."""
     def __init__(self, vib_pin: int = 33):
         import Jetson.GPIO as GPIO   # noqa: lazy, Jetson 전용
         self.GPIO, self.vib = GPIO, vib_pin
+        self._timer: threading.Timer | None = None
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup(vib_pin, GPIO.OUT, initial=GPIO.LOW)
         self.selftest()
@@ -280,10 +346,17 @@ class GpioSink:
     def emit(self, e: AlertEvent) -> None:
         if e.onset or e.remind:
             dur = 0.6 if e.level == "CRITICAL" else 0.3
-            self.GPIO.output(self.vib, self.GPIO.HIGH); time.sleep(dur)
-            self.GPIO.output(self.vib, self.GPIO.LOW)
+            if self._timer is not None:
+                self._timer.cancel()                 # 연속 펄스는 뒤 것으로 연장
+            self.GPIO.output(self.vib, self.GPIO.HIGH)
+            self._timer = threading.Timer(dur, self.GPIO.output, (self.vib, self.GPIO.LOW))
+            self._timer.daemon = True
+            self._timer.start()
 
     def close(self):
+        if self._timer is not None:
+            self._timer.cancel()
+        self.GPIO.output(self.vib, self.GPIO.LOW)
         self.GPIO.cleanup()
 
 

@@ -28,4 +28,12 @@ FAST=""
 if [ "$1" = "--det-only" ]; then ENGINES=""; shift; fi
 
 # stride 0.15: 게이트 확정 0.3s + PRE(1.5s창) 1.76s 실측. 연산: 검출 0.16ms×2+속도 12ms @6.7Hz — 여유.
-exec /usr/bin/python3 -u infer_trt.py --live --device ReSpeaker --stride 0.15 $ENGINES "$@"
+# 자동 재시작: 안전제품에서 조용한 사망=무경보가 최악. 비정상 종료(크래시·오디오 워치독 code 3)만
+# 재시작, 정상 종료(0, Ctrl-C 포함)는 그대로 끝. 장기적으론 systemd 서비스(Restart=always)로 승격 권장.
+while :; do
+    /usr/bin/python3 -u infer_trt.py --live --device ReSpeaker --stride 0.15 $ENGINES "$@"
+    CODE=$?
+    [ "$CODE" -eq 0 ] && exit 0
+    echo "[run.sh] 런타임 종료 code=$CODE — 2s 후 재시작 (중단: Ctrl-C)" >&2
+    sleep 2
+done

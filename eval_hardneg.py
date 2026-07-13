@@ -35,9 +35,9 @@ def margins_of(y: np.ndarray, det, device, stride_s: float, det_frames: int | No
     return out
 
 
-def gate_onsets(margins: list[float], dt: float) -> int:
-    """마진 시퀀스를 실제 Gate에 통과 → ONSET(오경보) 횟수."""
-    g = alert.Gate(alert.CFG["siren"], dt)
+def gate_onsets(margins: list[float], dt: float, cfg: dict | None = None) -> int:
+    """마진 시퀀스를 실제 Gate에 통과 → ONSET(오경보) 횟수. cfg로 예비(siren_fast) 게이트도 평가."""
+    g = alert.Gate(cfg or alert.CFG["siren"], dt)
     return sum(1 for m in margins if g.update(m)["onset"])
 
 
@@ -46,9 +46,12 @@ def main(argv=None) -> int:
     ap.add_argument("--dir", default=None, help="hard-negative wav 폴더 (음악/사이렌FX/알람)")
     ap.add_argument("--sanity", action="store_true", help="test split horn/noise로 하네스 검증")
     ap.add_argument("--ckpt", default="models/cnn_attn_full_s42.pt")
-    ap.add_argument("--stride", type=float, default=0.5, help="tick 간격(초)")
+    ap.add_argument("--stride", type=float, default=0.15,
+                    help="tick 간격(초) — **런타임 run.sh와 동일해야** Gate FA가 비교 가능 (기본 0.15)")
     ap.add_argument("--window", type=float, default=None,
-                    help="검출 창(초) — 예비 채널(2s) 오경보 평가용. 기본 5초 전체")
+                    help="검출 창(초) — 예비 채널(1.5s) 오경보 평가용. 기본 5초 전체")
+    ap.add_argument("--gate", default="siren", choices=["siren", "siren_fast"],
+                    help="Gate 설정 — 예비 채널 평가는 siren_fast + --window 1.5")
     ap.add_argument("--limit", type=int, default=200, help="sanity 파일 수 제한")
     args = ap.parse_args(argv)
     det_frames = (1 + int(args.window * ds.SR) // ds.HOP) if args.window else None
@@ -82,7 +85,7 @@ def main(argv=None) -> int:
         if not mg:
             continue
         all_m.extend(mg)
-        n_on = gate_onsets(mg, args.stride)
+        n_on = gate_onsets(mg, args.stride, alert.CFG[args.gate])
         if n_on:
             fa_files.append((f, max(mg), n_on))
         if (i + 1) % 50 == 0:
@@ -90,7 +93,7 @@ def main(argv=None) -> int:
 
     m = np.array(all_m)
     hrs = total_sec / 3600
-    tau = alert.CFG["siren"]["tau_on"]
+    tau = alert.CFG[args.gate]["tau_on"]
     print(f"\n{'='*62}\n창 {len(m):,}개 · 오디오 {total_sec/60:.1f}분\n{'='*62}")
     print(f"마진 분위수: p50 {np.percentile(m,50):+.2f}  p95 {np.percentile(m,95):+.2f}"
           f"  p99 {np.percentile(m,99):+.2f}  p99.9 {np.percentile(m,99.9):+.2f}  max {m.max():+.2f}")
